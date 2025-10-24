@@ -4,7 +4,7 @@ services:
   gsm-scraper:
     build: .
     ports:
-      - "3002:3002"
+      - "3005:3002"
     environment:
       - NODE_ENV=production
       - PORT=3002

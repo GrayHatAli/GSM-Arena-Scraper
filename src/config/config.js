@@ -28,13 +28,11 @@ export const CONFIG = {
       '--disable-features=VizDisplayCompositor',
       '--disable-extensions',
       '--disable-plugins',
-      '--disable-images',
-      '--disable-javascript',
-      '--disable-default-apps',
       '--disable-background-timer-throttling',
       '--disable-backgrounding-occluded-windows',
       '--disable-renderer-backgrounding'
     ],
+    ignoreHTTPSErrors: true,
     ignoreDefaultArgs: ['--disable-extensions'],
     timeout: 60000
   },
@@ -48,7 +46,7 @@ export const CONFIG = {
   },
 
   // User agent
-  USER_AGENT: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+  USER_AGENT: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36',
 
   // GSM Arena URLs
   URLS: {

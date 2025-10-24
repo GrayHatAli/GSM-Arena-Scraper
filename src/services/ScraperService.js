@@ -326,7 +326,7 @@ export class ScraperService {
         timeout: 30000
       });
 
-      const brands = await this.page.evaluate((persianNames) => {
+      const brands = await this.page.evaluate(() => {
         const brandElements = document.querySelectorAll('.st-text a');
         const brands = [];
         
@@ -338,12 +338,12 @@ export class ScraperService {
           brands.push({
             name: brandName,
             url: brandUrl,
-            persian_name: persianNames[brandName] || brandName.charAt(0).toUpperCase() + brandName.slice(1)
+            persian_name: brandName.charAt(0).toUpperCase() + brandName.slice(1)
           });
         });
         
         return brands;
-      }, CONFIG.PERSIAN_NAMES);
+      });
 
       return brands;
     } catch (error) {
