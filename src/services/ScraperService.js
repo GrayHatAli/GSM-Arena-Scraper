@@ -64,11 +64,28 @@ export class ScraperService {
       const allBrands = await this.getAvailableBrands();
       
       // If no brands specified or empty array, scrape all available brands
-      const targetBrands = (!brands || brands.length === 0) 
-        ? allBrands.map(b => b.name) 
-        : brands;
+      let brandsToScrape = [];
       
-      const filteredBrands = allBrands.filter(brand => targetBrands.includes(brand.name));
+      if (!brands || brands.length === 0) {
+        // Scrape all brands
+        brandsToScrape = allBrands;
+      } else {
+        // Find matching brands
+        for (const brandName of brands) {
+          const brand = allBrands.find(b => b.name === brandName);
+          if (brand) {
+            brandsToScrape.push(brand);
+          }
+        }
+      }
+      
+      if (brandsToScrape.length === 0) {
+        this.currentStatus = 'error';
+        throw new Error(`No brands found matching: ${brands ? brands.join(', ') : 'none'}`);
+      }
+      
+      logProgress(`Found ${brandsToScrape.length} brands to scrape`, 'info');
+      logProgress(`Brands: ${brandsToScrape.map(b => b.name).join(', ')}`, 'info');
       
       const result = {
         brands: [],
@@ -78,7 +95,8 @@ export class ScraperService {
         options: options
       };
 
-      for (const brand of targetBrands) {
+      for (const brand of brandsToScrape) {
+        logProgress(`About to scrape brand: ${brand.name} (${brand.persian_name})`, 'info');
         const brandData = await this.scrapeBrand(brand, options);
         result.brands.push(brandData);
         result.total_models += brandData.models.length;
@@ -87,6 +105,13 @@ export class ScraperService {
       }
 
       result.total_brands = result.brands.length;
+      
+      // Check if any models were scraped
+      if (result.total_models === 0) {
+        this.currentStatus = 'error';
+        throw new Error('No models found for the specified brands and filters');
+      }
+      
       this.currentStatus = 'completed';
       
       return result;
@@ -228,12 +253,18 @@ export class ScraperService {
    * @returns {Object} - Brand data with models
    */
   async scrapeBrand(brand, options = {}) {
-    logProgress(`Processing brand: ${brand.persian_name}`, 'info');
+    if (!brand || !brand.name) {
+      logProgress(`Invalid brand object: ${JSON.stringify(brand)}`, 'error');
+      throw new Error('Invalid brand object provided');
+    }
+    
+    const brandName = brand.persian_name || brand.name || 'Unknown';
+    logProgress(`Processing brand: ${brandName}`, 'info');
     
     const models = await this.getBrandModels(brand, options);
     const brandData = {
       name: brand.name,
-      persian_name: brand.persian_name,
+      persian_name: brand.persian_name || brand.name.charAt(0).toUpperCase() + brand.name.slice(1),
       logo_url: `${CONFIG.URLS.base}/img/logo_${brand.name}.png`,
       is_active: true,
       models: []
@@ -277,48 +308,58 @@ export class ScraperService {
   async getBrandModels(brand, options = {}) {
     logProgress(`Extracting models for ${brand.persian_name}...`, 'info');
     
-    await this.page.goto(brand.url, {
-      waitUntil: 'networkidle2',
-      timeout: 30000
-    });
-
-    await delay(CONFIG.DELAYS.page_load);
-
-    const models = await this.page.evaluate((excludeKeywords, minYear) => {
-      const modelElements = document.querySelectorAll('.makers a');
-      const models = [];
-      
-      modelElements.forEach(element => {
-        const modelName = element.textContent.trim();
-        const modelUrl = element.href;
-        
-        // Check if device should be excluded
-        const shouldExclude = excludeKeywords.some(keyword => 
-          modelName.toLowerCase().includes(keyword)
-        );
-        
-        if (shouldExclude) return;
-        
-        // Extract year
-        const yearMatch = modelName.match(/(\d{4})/);
-        const year = yearMatch ? parseInt(yearMatch[1]) : null;
-        
-        // Filter by year (if minYear is specified, otherwise include all)
-        if (minYear === null || !year || year >= minYear) {
-          models.push({
-            name: modelName,
-            url: modelUrl,
-            year: year,
-            persian_name: modelName
-          });
-        }
+    try {
+      await this.page.goto(brand.url, {
+        waitUntil: 'networkidle2',
+        timeout: 60000
       });
-      
-      return models;
-    }, CONFIG.EXCLUDE_KEYWORDS, options.minYear !== undefined ? options.minYear : null);
 
-    logProgress(`Found ${models.length} phone models for ${brand.persian_name}`, 'success');
-    return models;
+      await delay(CONFIG.DELAYS.page_load);
+
+      const models = await this.page.evaluate((excludeKeywords, minYear) => {
+        const modelElements = document.querySelectorAll('.makers a');
+        const models = [];
+        
+        modelElements.forEach(element => {
+          const modelName = element.textContent.trim();
+          const modelUrl = element.href;
+          
+          // Validate URL
+          if (!modelUrl || !modelUrl.startsWith('http')) {
+            return;
+          }
+          
+          // Check if device should be excluded
+          const shouldExclude = excludeKeywords.some(keyword => 
+            modelName.toLowerCase().includes(keyword)
+          );
+          
+          if (shouldExclude) return;
+          
+          // Extract year
+          const yearMatch = modelName.match(/(\d{4})/);
+          const year = yearMatch ? parseInt(yearMatch[1]) : null;
+          
+          // Filter by year (if minYear is specified, otherwise include all)
+          if (minYear === null || !year || year >= minYear) {
+            models.push({
+              name: modelName,
+              url: modelUrl,
+              year: year,
+              persian_name: modelName
+            });
+          }
+        });
+        
+        return models;
+      }, CONFIG.EXCLUDE_KEYWORDS, options.minYear !== undefined ? options.minYear : null);
+
+      logProgress(`Found ${models.length} phone models for ${brand.persian_name}`, 'success');
+      return models;
+    } catch (error) {
+      logProgress(`Error getting models for ${brand.persian_name}: ${error.message}`, 'error');
+      return [];
+    }
   }
 
   /**
@@ -329,9 +370,15 @@ export class ScraperService {
    */
   async getModelDetails(model, options = {}) {
     try {
+      // Validate URL before navigation
+      if (!model.url || !model.url.startsWith('http')) {
+        logProgress(`Invalid URL for model ${model.name}: ${model.url}`, 'error');
+        return generateFallbackData('unknown', model.name);
+      }
+
       await this.page.goto(model.url, {
         waitUntil: 'networkidle2',
-        timeout: 30000
+        timeout: 60000
       });
       
       await delay(CONFIG.DELAYS.between_requests);

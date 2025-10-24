@@ -17,6 +17,17 @@ export class ScraperController {
   async scrapeBrands(brands, options = {}) {
     try {
       const result = await this.scraperService.scrapeBrands(brands, options);
+      
+      // Check if any models were scraped
+      if (result.total_models === 0) {
+        return ResponseHelper.error('No models found for the specified brands and filters', {
+          brands: result.brands,
+          total_brands: result.total_brands,
+          total_models: result.total_models,
+          options: result.options
+        });
+      }
+      
       return ResponseHelper.success('Brand scraping completed successfully', result);
     } catch (error) {
       return ResponseHelper.error('Brand scraping failed', error.message);

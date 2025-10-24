@@ -1,30 +1,14 @@
 // Configuration for GSM Arena Scraper
 
 export const CONFIG = {
-  // Default target brands (can be overridden by user)
-  DEFAULT_TARGET_BRANDS: [
-    'apple', 'samsung', 'xiaomi', 'huawei', 'oppo', 
-    'nothing', 'google', 'realme', 'honor'
-  ],
+  // No default brands - will get all results unless specified by user
+  DEFAULT_TARGET_BRANDS: [],
 
-  // Persian names for brands
-  PERSIAN_NAMES: {
-    'apple': 'اپل',
-    'samsung': 'سامسونگ',
-    'xiaomi': 'شیائومی',
-    'huawei': 'هواوی',
-    'oppo': 'اوپو',
-    'nothing': 'ناتینگ',
-    'google': 'گوگل',
-    'realme': 'ریلمی',
-    'honor': 'آنر'
-  },
-
-  // Default year filter (can be overridden by user, null means no filtering)
+  // No default year filter - will get all results unless specified by user
   DEFAULT_MIN_YEAR: null,
 
-  // Number of models to scrape per brand
-  MODELS_PER_BRAND: 10,
+  // No limit on models per brand - will get all available models
+  MODELS_PER_BRAND: null,
 
   // Output file path
   OUTPUT_FILE: 'output/gsm-arena-data.json',
@@ -39,8 +23,20 @@ export const CONFIG = {
       '--disable-accelerated-2d-canvas',
       '--no-first-run',
       '--no-zygote',
-      '--disable-gpu'
-    ]
+      '--disable-gpu',
+      '--disable-web-security',
+      '--disable-features=VizDisplayCompositor',
+      '--disable-extensions',
+      '--disable-plugins',
+      '--disable-images',
+      '--disable-javascript',
+      '--disable-default-apps',
+      '--disable-background-timer-throttling',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-renderer-backgrounding'
+    ],
+    ignoreDefaultArgs: ['--disable-extensions'],
+    timeout: 60000
   },
 
   // Request delays (in milliseconds)
