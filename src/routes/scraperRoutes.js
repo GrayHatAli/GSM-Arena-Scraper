@@ -24,6 +24,12 @@ export class ScraperRoutes {
       'POST /brands/scrape': this.scrapeBrands.bind(this),
       'POST /brands/:brandName/scrape': this.scrapeBrandModels.bind(this),
       
+      // New endpoints for the requested features
+      'GET /brands/all': this.getAllBrands.bind(this),
+      'GET /brands/:brandName/devices': this.getDevicesByBrand.bind(this),
+      'GET /devices/:deviceId/specifications': this.getDeviceSpecifications.bind(this),
+      'GET /devices/search': this.findDevicesByKeyword.bind(this),
+      
       // Scraping endpoints
       'POST /scrape/test': this.testScraping.bind(this),
       
@@ -209,6 +215,89 @@ export class ScraperRoutes {
       res.status(500).json({
         success: false,
         message: 'Failed to save data',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Get all available brands
+   * @param {Object} req - Request object
+   * @param {Object} res - Response object
+   */
+  async getAllBrands(req, res) {
+    try {
+      const result = await this.controller.getAllBrands();
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: 'Failed to get all brands',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Get devices by brand name
+   * @param {Object} req - Request object
+   * @param {Object} res - Response object
+   */
+  async getDevicesByBrand(req, res) {
+    try {
+      const { brandName } = req.params;
+      const result = await this.controller.getDevicesByBrand(brandName);
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: 'Failed to get devices by brand',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Get device specifications
+   * @param {Object} req - Request object
+   * @param {Object} res - Response object
+   */
+  async getDeviceSpecifications(req, res) {
+    try {
+      const { deviceId } = req.params;
+      const result = await this.controller.getDeviceSpecifications(deviceId);
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: 'Failed to get device specifications',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Find devices by keyword
+   * @param {Object} req - Request object
+   * @param {Object} res - Response object
+   */
+  async findDevicesByKeyword(req, res) {
+    try {
+      const { keyword } = req.query;
+      
+      if (!keyword) {
+        return res.status(400).json({
+          success: false,
+          message: 'Keyword parameter is required'
+        });
+      }
+      
+      const result = await this.controller.findDevicesByKeyword(keyword);
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: 'Failed to search devices',
         error: error.message
       });
     }

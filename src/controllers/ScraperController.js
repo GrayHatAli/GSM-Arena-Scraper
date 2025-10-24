@@ -35,17 +35,57 @@ export class ScraperController {
   }
 
   /**
-   * Scrape specific models for a brand
-   * @param {string} brandName - Brand name
-   * @param {Object} options - Scraping options
-   * @returns {Object} - Scraping result
+   * Get all available brands
+   * @returns {Object} - List of all brands
    */
-  async scrapeBrandModels(brandName, options = {}) {
+  async getAllBrands() {
     try {
-      const result = await this.scraperService.scrapeBrandModels(brandName, options);
-      return ResponseHelper.success('Brand models scraping completed successfully', result);
+      const brands = await this.scraperService.getAllBrands();
+      return ResponseHelper.success('Retrieved all brands successfully', { brands });
     } catch (error) {
-      return ResponseHelper.error('Brand models scraping failed', error.message);
+      return ResponseHelper.error('Failed to get brands', error.message);
+    }
+  }
+
+  /**
+   * Get devices by brand name
+   * @param {string} brandName - Brand name
+   * @returns {Object} - List of devices for the brand
+   */
+  async getDevicesByBrand(brandName) {
+    try {
+      const devices = await this.scraperService.getDevicesByBrand(brandName);
+      return ResponseHelper.success(`Retrieved devices for ${brandName} successfully`, { devices });
+    } catch (error) {
+      return ResponseHelper.error(`Failed to get devices for ${brandName}`, error.message);
+    }
+  }
+
+  /**
+   * Get device specifications by device ID
+   * @param {string} deviceId - Device ID
+   * @returns {Object} - Device specifications
+   */
+  async getDeviceSpecifications(deviceId) {
+    try {
+      const specifications = await this.scraperService.getDeviceSpecifications(deviceId);
+      return ResponseHelper.success('Retrieved device specifications successfully', specifications);
+    } catch (error) {
+      return ResponseHelper.error('Failed to get device specifications', error.message);
+    }
+  }
+
+  /**
+   * Find devices by keyword
+   * @param {string} keyword - Search keyword
+   * @returns {Object} - List of matching devices
+   */
+  async findDevicesByKeyword(keyword) {
+    try {
+      const devices = await this.scraperService.findDevicesByKeyword(keyword);
+      return ResponseHelper.success(`Found ${devices.length} devices matching "${keyword}"`, { devices });
+    } catch (error) {
+      return ResponseHelper.error('Failed to search devices', error.message);
     }
   }
 

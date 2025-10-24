@@ -36,15 +36,167 @@ export class ScraperService {
   }
 
   /**
-   * Close browser
+   * Get all available brands from GSM Arena
+   * @returns {Promise<Array>} - List of all brands
    */
-  async close() {
-    if (this.browser) {
-      await this.browser.close();
-      this.browser = null;
-      this.page = null;
-      this.currentStatus = 'idle';
-      logProgress('Browser closed', 'info');
+  async getAllBrands() {
+    try {
+      await this.init();
+      this.currentStatus = 'fetching_brands';
+      
+      await this.page.goto('https://www.gsmarena.com/makers.php3', { waitUntil: 'networkidle2' });
+      
+      // Extract all brands
+      const brands = await this.page.evaluate(() => {
+        const brandElements = document.querySelectorAll('table td a');
+        return Array.from(brandElements).map(el => {
+          const href = el.getAttribute('href');
+          const brandName = href.split('-')[0];
+          const deviceCount = el.querySelector('span')?.innerText.replace(/[()]/g, '') || '0';
+          
+          return {
+            name: brandName,
+            display_name: el.innerText.replace(/\(\d+\)/, '').trim(),
+            device_count: parseInt(deviceCount, 10),
+            url: href
+          };
+        });
+      });
+      
+      this.currentStatus = 'ready';
+      return brands;
+    } catch (error) {
+      this.currentStatus = 'error';
+      throw new Error(`Failed to get brands: ${error.message}`);
+    }
+  }
+
+  /**
+   * Get devices by brand name
+   * @param {string} brandName - Brand name
+   * @returns {Promise<Array>} - List of devices for the brand
+   */
+  async getDevicesByBrand(brandName) {
+    try {
+      await this.init();
+      this.currentStatus = 'fetching_devices';
+      
+      await this.page.goto(`https://www.gsmarena.com/${brandName}-phones-f-0-0-p1.php`, { waitUntil: 'networkidle2' });
+      
+      // Extract all devices for the brand
+      const devices = await this.page.evaluate(() => {
+        const deviceElements = document.querySelectorAll('.makers ul li');
+        return Array.from(deviceElements).map(el => {
+          const link = el.querySelector('a');
+          const img = el.querySelector('img');
+          
+          return {
+            name: link.innerText.trim(),
+            url: link.getAttribute('href'),
+            image: img ? img.getAttribute('src') : null,
+            id: link.getAttribute('href').split('-')[1].replace('.php', '')
+          };
+        });
+      });
+      
+      this.currentStatus = 'ready';
+      return devices;
+    } catch (error) {
+      this.currentStatus = 'error';
+      throw new Error(`Failed to get devices for brand ${brandName}: ${error.message}`);
+    }
+  }
+
+  /**
+   * Get device specifications by device ID
+   * @param {string} deviceId - Device ID
+   * @returns {Promise<Object>} - Device specifications
+   */
+  async getDeviceSpecifications(deviceId) {
+    try {
+      await this.init();
+      this.currentStatus = 'fetching_specifications';
+      
+      await this.page.goto(`https://www.gsmarena.com/device-${deviceId}.php`, { waitUntil: 'networkidle2' });
+      
+      // Extract device specifications
+      const specifications = await this.page.evaluate(() => {
+        const specs = {};
+        const specTables = document.querySelectorAll('table');
+        
+        specTables.forEach(table => {
+          const category = table.querySelector('th')?.innerText.trim();
+          if (!category) return;
+          
+          specs[category] = {};
+          const rows = table.querySelectorAll('tr:not(:first-child)');
+          
+          rows.forEach(row => {
+            const key = row.querySelector('td.ttl')?.innerText.trim();
+            const value = row.querySelector('td.nfo')?.innerText.trim();
+            if (key && value) {
+              specs[category][key] = value;
+            }
+          });
+        });
+        
+        // Get device name and image
+        const deviceName = document.querySelector('h1.specs-phone-name')?.innerText.trim();
+        const deviceImage = document.querySelector('.specs-photo-main img')?.getAttribute('src');
+        
+        return {
+          name: deviceName,
+          image: deviceImage,
+          specifications: specs
+        };
+      });
+      
+      this.currentStatus = 'ready';
+      return specifications;
+    } catch (error) {
+      this.currentStatus = 'error';
+      throw new Error(`Failed to get specifications for device ${deviceId}: ${error.message}`);
+    }
+  }
+
+  /**
+   * Find devices by keyword
+   * @param {string} keyword - Search keyword
+   * @returns {Promise<Array>} - List of matching devices
+   */
+  async findDevicesByKeyword(keyword) {
+    try {
+      await this.init();
+      this.currentStatus = 'searching_devices';
+      
+      await this.page.goto(`https://www.gsmarena.com/results.php3?sQuickSearch=${encodeURIComponent(keyword)}`, { waitUntil: 'networkidle2' });
+      
+      // Extract search results
+      const searchResults = await this.page.evaluate(() => {
+        const resultElements = document.querySelectorAll('.makers ul li');
+        
+        if (resultElements.length === 0) {
+          return [];
+        }
+        
+        return Array.from(resultElements).map(el => {
+          const link = el.querySelector('a');
+          const img = el.querySelector('img');
+          
+          return {
+            name: link.innerText.trim(),
+            url: link.getAttribute('href'),
+            image: img ? img.getAttribute('src') : null,
+            id: link.getAttribute('href').split('-')[1].replace('.php', '')
+          };
+        });
+      });
+      
+      this.currentStatus = 'ready';
+      return searchResults;
+    } catch (error) {
+      this.currentStatus = 'error';
+      throw new Error(`Failed to search devices with keyword ${keyword}: ${error.message}`);
     }
   }
 
