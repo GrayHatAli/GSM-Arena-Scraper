@@ -68,7 +68,7 @@ export const CONFIG = {
   // API Configuration
   API: {
     port: 3002,
-    host: 'localhost',
+    host: '0.0.0.0',
     timeout: 300000, // 5 minutes
     maxConcurrent: 3
   }

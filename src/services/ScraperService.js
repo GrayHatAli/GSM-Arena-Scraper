@@ -161,7 +161,7 @@ export class ScraperService {
           brands.push({
             name: brandName,
             url: brandUrl,
-            persian_name: persianNames[brandName] || brandName
+            persian_name: persianNames[brandName] || brandName.charAt(0).toUpperCase() + brandName.slice(1)
           });
         });
         

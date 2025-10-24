@@ -48,7 +48,6 @@ export class ScraperAPI {
     this.app.post('/brands/:brandName/scrape', routeDefinitions['POST /brands/:brandName/scrape']);
 
     // Scraping endpoints
-    this.app.post('/scrape/all', routeDefinitions['POST /scrape/all']);
     this.app.post('/scrape/test', routeDefinitions['POST /scrape/test']);
 
     // Data endpoints
@@ -85,9 +84,8 @@ export class ScraperAPI {
       console.log(`   GET  /health - Health check`);
       console.log(`   GET  /status - Get scraping status`);
       console.log(`   GET  /brands - Get available brands`);
-      console.log(`   POST /brands/scrape - Scrape specific brands`);
+      console.log(`   POST /brands/scrape - Scrape brands (all brands if none specified)`);
       console.log(`   POST /brands/:brandName/scrape - Scrape brand models`);
-      console.log(`   POST /scrape/all - Scrape all brands`);
       console.log(`   POST /scrape/test - Test scraping`);
       console.log(`   GET  /data/latest - Get latest data`);
       console.log(`   POST /data/save - Save data`);
