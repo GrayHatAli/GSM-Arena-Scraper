@@ -1,8 +1,8 @@
 // Configuration for GSM Arena Scraper
 
 export const CONFIG = {
-  // Target brands to scrape
-  TARGET_BRANDS: [
+  // Default target brands (can be overridden by user)
+  DEFAULT_TARGET_BRANDS: [
     'apple', 'samsung', 'xiaomi', 'huawei', 'oppo', 
     'nothing', 'google', 'realme', 'honor'
   ],
@@ -20,8 +20,8 @@ export const CONFIG = {
     'honor': 'آنر'
   },
 
-  // Year filter (only devices from this year onwards)
-  MIN_YEAR: 2022,
+  // Default year filter (can be overridden by user, null means no filtering)
+  DEFAULT_MIN_YEAR: null,
 
   // Number of models to scrape per brand
   MODELS_PER_BRAND: 10,

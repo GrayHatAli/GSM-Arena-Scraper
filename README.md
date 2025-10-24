@@ -7,8 +7,8 @@ A standalone, production-ready web scraper for GSM Arena mobile phone data with 
 - **Independent Service**: Completely standalone, can be deployed anywhere
 - **RESTful API**: Clean API endpoints for all scraping operations
 - **Real Data Scraping**: Extracts actual specifications, RAM, Storage, Colors
-- **9 Major Brands**: Apple, Samsung, Xiaomi, Huawei, Oppo, Nothing, Google, Realme, Honor
-- **2022+ Filtering**: Only devices from 2022 onwards
+- **Flexible Brand Selection**: Choose any brands you want, or scrape all available brands
+- **Optional Year Filtering**: Filter by release year or include all devices regardless of year
 - **Mobile Phones Only**: Excludes tablets, watches, accessories
 - **Rate Limiting**: Respectful scraping with delays
 - **Error Handling**: Comprehensive error management
@@ -64,7 +64,18 @@ npm start
 
 ## 📡 API Examples
 
-### Scrape All Brands
+### Scrape All Brands (No Filtering)
+```bash
+curl -X POST http://localhost:3002/scrape/all \
+  -H "Content-Type: application/json" \
+  -d '{
+    "options": {
+      "modelsPerBrand": 10
+    }
+  }'
+```
+
+### Scrape All Brands with Year Filter
 ```bash
 curl -X POST http://localhost:3002/scrape/all \
   -H "Content-Type: application/json" \
@@ -72,6 +83,19 @@ curl -X POST http://localhost:3002/scrape/all \
     "options": {
       "modelsPerBrand": 10,
       "minYear": 2022
+    }
+  }'
+```
+
+### Scrape Specific Brands Only
+```bash
+curl -X POST http://localhost:3002/scrape/all \
+  -H "Content-Type: application/json" \
+  -d '{
+    "options": {
+      "brands": ["apple", "samsung", "xiaomi"],
+      "modelsPerBrand": 5,
+      "minYear": 2020
     }
   }'
 ```
@@ -133,6 +157,43 @@ The API returns data in a simple, standardized format:
 }
 ```
 
+## 🎛️ Flexible Filtering Options
+
+The scraper now supports flexible filtering options that can be customized per request:
+
+### Brand Selection
+- **All Brands**: Don't specify `brands` in options to scrape all available brands
+- **Specific Brands**: Specify `brands: ["apple", "samsung", "xiaomi"]` to scrape only selected brands
+- **Available Brands**: Use `GET /brands` endpoint to see all available brands
+
+### Year Filtering
+- **No Filtering**: Don't specify `minYear` to include all devices regardless of release year
+- **Year Filter**: Specify `minYear: 2022` to only include devices from 2022 onwards
+- **Historical Data**: Set `minYear: 2020` to include older devices
+
+### Example Combinations
+```bash
+# Scrape everything (all brands, all years)
+curl -X POST http://localhost:3002/scrape/all -d '{"options": {"modelsPerBrand": 5}}'
+
+# Scrape only Apple and Samsung from 2020 onwards
+curl -X POST http://localhost:3002/scrape/all -d '{
+  "options": {
+    "brands": ["apple", "samsung"],
+    "minYear": 2020,
+    "modelsPerBrand": 10
+  }
+}'
+
+# Scrape all brands but only recent devices
+curl -X POST http://localhost:3002/scrape/all -d '{
+  "options": {
+    "minYear": 2023,
+    "modelsPerBrand": 15
+  }
+}'
+```
+
 ## 🔧 Configuration
 
 Environment variables:
@@ -143,8 +204,8 @@ PORT=3002
 HOST=0.0.0.0
 NODE_ENV=production
 
-# Scraping Configuration
-MIN_YEAR=2022
+# Scraping Configuration (Optional)
+# MIN_YEAR=2022  # Set to filter by year, leave unset for no year filtering
 MODELS_PER_BRAND=10
 REQUEST_DELAY=1000
 ```
@@ -174,8 +235,13 @@ const axios = require('axios');
 
 async function getGSMData() {
   try {
+    // Scrape all brands without year filtering
     const response = await axios.post('http://your-scraper-host:3002/scrape/all', {
-      options: { modelsPerBrand: 10 }
+      options: { 
+        modelsPerBrand: 10,
+        brands: ['apple', 'samsung', 'xiaomi'], // Optional: specify brands
+        minYear: 2022 // Optional: filter by year
+      }
     });
     return response.data;
   } catch (error) {
@@ -190,8 +256,15 @@ import requests
 
 def get_gsm_data():
     try:
+        # Scrape all brands without year filtering
         response = requests.post('http://your-scraper-host:3002/scrape/all', 
-                                json={'options': {'modelsPerBrand': 10}})
+                                json={
+                                    'options': {
+                                        'modelsPerBrand': 10,
+                                        'brands': ['apple', 'samsung', 'xiaomi'],  # Optional: specify brands
+                                        'minYear': 2022  # Optional: filter by year
+                                    }
+                                })
         return response.json()
     except Exception as e:
         print(f'Scraping failed: {e}')
@@ -201,7 +274,13 @@ def get_gsm_data():
 ```php
 <?php
 function getGSMData() {
-    $data = ['options' => ['modelsPerBrand' => 10]];
+    $data = [
+        'options' => [
+            'modelsPerBrand' => 10,
+            'brands' => ['apple', 'samsung', 'xiaomi'], // Optional: specify brands
+            'minYear' => 2022 // Optional: filter by year
+        ]
+    ];
     $options = [
         'http' => [
             'header' => "Content-type: application/json\r\n",

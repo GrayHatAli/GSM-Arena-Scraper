@@ -53,7 +53,7 @@ class GSMArenaScraper {
       timeout: 30000
     });
 
-    const brands = await this.page.evaluate((targetBrands, persianNames) => {
+    const brands = await this.page.evaluate((persianNames) => {
       const brandElements = document.querySelectorAll('.st-text a');
       const brands = [];
       
@@ -62,17 +62,15 @@ class GSMArenaScraper {
         const brandName = brandText.replace(/\d+.*$/, '').toLowerCase().trim();
         const brandUrl = element.href;
         
-        if (targetBrands.includes(brandName)) {
-          brands.push({
-            name: brandName,
-            url: brandUrl,
-            persian_name: persianNames[brandName] || brandName
-          });
-        }
+        brands.push({
+          name: brandName,
+          url: brandUrl,
+          persian_name: persianNames[brandName] || brandName
+        });
       });
       
       return brands;
-    }, CONFIG.TARGET_BRANDS, CONFIG.PERSIAN_NAMES);
+    }, CONFIG.PERSIAN_NAMES);
 
     logProgress(`Found ${brands.length} target brands`, 'success');
     return brands;
@@ -112,8 +110,8 @@ class GSMArenaScraper {
         const yearMatch = modelName.match(/(\d{4})/);
         const year = yearMatch ? parseInt(yearMatch[1]) : null;
         
-        // Filter by year
-        if (!year || year >= minYear) {
+        // Filter by year (if minYear is specified, otherwise include all)
+        if (minYear === null || !year || year >= minYear) {
           models.push({
             name: modelName,
             url: modelUrl,
@@ -124,7 +122,7 @@ class GSMArenaScraper {
       });
       
       return models;
-    }, CONFIG.EXCLUDE_KEYWORDS, CONFIG.MIN_YEAR);
+    }, CONFIG.EXCLUDE_KEYWORDS, CONFIG.DEFAULT_MIN_YEAR);
 
     logProgress(`Found ${models.length} phone models for ${brand.persian_name}`, 'success');
     return models;

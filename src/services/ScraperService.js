@@ -61,7 +61,8 @@ export class ScraperService {
       await this.init();
       
       const brands = await this.getAvailableBrands();
-      const targetBrands = options.brands || CONFIG.TARGET_BRANDS;
+      // If no brands specified, scrape all available brands
+      const targetBrands = options.brands || brands.map(b => b.name);
       const filteredBrands = brands.filter(brand => targetBrands.includes(brand.name));
       
       const result = {
@@ -230,7 +231,7 @@ export class ScraperService {
 
       const options = {
         modelsPerBrand: 3,
-        minYear: CONFIG.MIN_YEAR
+        minYear: undefined // No year filtering for test
       };
 
       const brandData = await this.scrapeBrand(brand, options);
@@ -341,8 +342,8 @@ export class ScraperService {
         const yearMatch = modelName.match(/(\d{4})/);
         const year = yearMatch ? parseInt(yearMatch[1]) : null;
         
-        // Filter by year
-        if (!year || year >= minYear) {
+        // Filter by year (if minYear is specified, otherwise include all)
+        if (minYear === null || !year || year >= minYear) {
           models.push({
             name: modelName,
             url: modelUrl,
@@ -353,7 +354,7 @@ export class ScraperService {
       });
       
       return models;
-    }, CONFIG.EXCLUDE_KEYWORDS, options.minYear || CONFIG.MIN_YEAR);
+    }, CONFIG.EXCLUDE_KEYWORDS, options.minYear !== undefined ? options.minYear : null);
 
     logProgress(`Found ${models.length} phone models for ${brand.persian_name}`, 'success');
     return models;
