@@ -1,11 +1,12 @@
 // Scraper Controller - Handles all scraping operations
 
 import { ScraperService } from '../services/ScraperService.js';
+import { DirectApiService } from '../services/DirectApiService.js';
 import { ResponseHelper } from '../utils/ResponseHelper.js';
 
 export class ScraperController {
   constructor() {
-    this.scraperService = new ScraperService();
+    this.scraperService = new DirectApiService();
   }
 
   /**

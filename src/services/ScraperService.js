@@ -24,15 +24,81 @@ export class ScraperService {
    * Initialize browser and page
    */
   async init() {
-    if (this.browser) return;
-    
-    logProgress('Initializing browser...', 'info');
-    this.browser = await puppeteer.launch(CONFIG.PUPPETEER_OPTIONS);
-    this.page = await this.browser.newPage();
-    
-    await this.page.setUserAgent(CONFIG.USER_AGENT);
-    this.currentStatus = 'ready';
-    logProgress('Browser initialized successfully', 'success');
+    if (this.browser) {
+      return;
+    }
+
+    try {
+      this.currentStatus = 'initializing';
+      
+      // Set up browser with proper user agent and stealth options
+      this.browser = await puppeteer.launch({
+        ...CONFIG.PUPPETEER_OPTIONS,
+        // Additional options to avoid detection
+        args: [
+          ...CONFIG.PUPPETEER_OPTIONS.args,
+          '--disable-blink-features=AutomationControlled',
+          '--window-size=1920,1080'
+        ]
+      });
+      
+      this.page = await this.browser.newPage();
+      
+      // Set user agent
+      await this.page.setUserAgent(CONFIG.USER_AGENT);
+      
+      // Set viewport
+      await this.page.setViewport({
+        width: 1920,
+        height: 1080,
+        deviceScaleFactor: 1
+      });
+      
+      // Enable JavaScript
+      await this.page.setJavaScriptEnabled(true);
+      
+      // Set extra HTTP headers to appear more like a real browser
+      await this.page.setExtraHTTPHeaders({
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
+        'Cache-Control': 'max-age=0'
+      });
+      
+      // Mask webdriver
+      await this.page.evaluateOnNewDocument(() => {
+        // Overwrite the 'navigator.webdriver' property to prevent detection
+        Object.defineProperty(navigator, 'webdriver', {
+          get: () => false
+        });
+        
+        // Overwrite chrome object to appear as normal browser
+        window.chrome = {
+          runtime: {}
+        };
+        
+        // Overwrite permissions
+        const originalQuery = window.navigator.permissions.query;
+        window.navigator.permissions.query = (parameters) => (
+          parameters.name === 'notifications' ?
+            Promise.resolve({ state: Notification.permission }) :
+            originalQuery(parameters)
+        );
+      });
+      
+      this.currentStatus = 'ready';
+      logProgress('Browser initialized successfully', 'success');
+    } catch (error) {
+      this.currentStatus = 'error';
+      logProgress(`Failed to initialize browser: ${error.message}`, 'error');
+      throw error;
+    }
   }
 
   /**
@@ -461,50 +527,186 @@ export class ScraperService {
     logProgress(`Extracting models for ${brand.persian_name}...`, 'info');
     
     try {
+      // Add random delay to avoid detection (between 1-3 seconds)
+      const randomDelay = Math.floor(Math.random() * 2000) + 1000;
+      await delay(randomDelay);
+      
       await this.page.goto(brand.url, {
-        waitUntil: 'networkidle2',
+        waitUntil: ['load', 'networkidle2'],
         timeout: 60000
       });
 
       await delay(CONFIG.DELAYS.page_load);
+      
+      // Debug: Log the current URL
+      const currentUrl = await this.page.url();
+      logProgress(`Current URL: ${currentUrl}`, 'info');
+      
+      // Check if we've been redirected to a different page (possible anti-bot measure)
+      if (currentUrl.includes('error') || currentUrl.includes('captcha')) {
+        logProgress(`Detected anti-bot page: ${currentUrl}`, 'error');
+        throw new Error('Anti-bot protection detected');
+      }
+      
+      // Wait for content to load
+      try {
+        await this.page.waitForSelector('.makers, .st-text, #review-body', { timeout: 10000 });
+      } catch (e) {
+        logProgress(`Timeout waiting for content selectors: ${e.message}`, 'warn');
+        // Continue anyway, we'll try different selectors
+      }
+      
+      // Debug: Take a screenshot to see what's being loaded
+      await this.page.screenshot({ path: 'debug-screenshot.png' });
+      
+      // Debug: Log the page HTML
+      const pageContent = await this.page.content();
+      logProgress(`Page content length: ${pageContent.length}`, 'info');
 
       const models = await this.page.evaluate((excludeKeywords, minYear) => {
-        const modelElements = document.querySelectorAll('.makers a');
-        const models = [];
+        // Try multiple selectors in order of specificity
+        const selectors = [
+          '.makers a',                // Original selector
+          '.makers ul li a',          // More specific maker selector
+          '.st-text a',               // Alternative text links
+          '#review-body a',           // General review body links
+          'a[href*="phone"]',         // Links containing "phone"
+          'a[href*="-"]',             // Links with dashes (common in GSM Arena URLs)
+          'a[href*="gsmarena.com"]'   // Any GSM Arena link
+        ];
         
-        modelElements.forEach(element => {
-          const modelName = element.textContent.trim();
-          const modelUrl = element.href;
+        let allModels = [];
+        
+        // Try each selector
+        for (const selector of selectors) {
+          const elements = document.querySelectorAll(selector);
+          console.log(`Selector ${selector} found ${elements.length} elements`);
           
-          // Validate URL
-          if (!modelUrl || !modelUrl.startsWith('http')) {
-            return;
+          if (elements.length > 0) {
+            const models = Array.from(elements).map(element => {
+              try {
+                const modelName = element.textContent.trim();
+                const modelUrl = element.href;
+                
+                // Validate URL
+                if (!modelUrl || (!modelUrl.includes('gsmarena.com') && !modelUrl.startsWith('/'))) {
+                  return null;
+                }
+                
+                // Check if device should be excluded
+                const shouldExclude = excludeKeywords.some(keyword => 
+                  modelName.toLowerCase().includes(keyword)
+                );
+                
+                if (shouldExclude) return null;
+                
+                // Extract year from various places
+                const yearPattern = /(20\d{2})/;
+                const yearMatch = modelName.match(yearPattern) || 
+                                 (element.title ? element.title.match(yearPattern) : null);
+                const year = yearMatch ? parseInt(yearMatch[1]) : null;
+                
+                // Filter by year (if minYear is specified, otherwise include all)
+                if (minYear === null || !year || year >= minYear) {
+                  return {
+                    name: modelName,
+                    url: modelUrl,
+                    year: year,
+                    persian_name: modelName
+                  };
+                }
+              } catch (e) {
+                console.log(`Error extracting model data: ${e.message}`);
+              }
+              return null;
+            }).filter(Boolean); // Remove null entries
+            
+            allModels = [...allModels, ...models];
+            
+            // If we found a good number of models, stop trying more selectors
+            if (allModels.length > 5) {
+              break;
+            }
           }
-          
-          // Check if device should be excluded
-          const shouldExclude = excludeKeywords.some(keyword => 
-            modelName.toLowerCase().includes(keyword)
-          );
-          
-          if (shouldExclude) return;
-          
-          // Extract year
-          const yearMatch = modelName.match(/(\d{4})/);
-          const year = yearMatch ? parseInt(yearMatch[1]) : null;
-          
-          // Filter by year (if minYear is specified, otherwise include all)
-          if (minYear === null || !year || year >= minYear) {
-            models.push({
-              name: modelName,
-              url: modelUrl,
-              year: year,
-              persian_name: modelName
-            });
+        }
+        
+        // Deduplicate models based on name
+        const uniqueModels = [];
+        const modelNames = new Set();
+        
+        for (const model of allModels) {
+          if (!modelNames.has(model.name)) {
+            modelNames.add(model.name);
+            uniqueModels.push(model);
           }
+        }
+        
+        return uniqueModels;
+      }, CONFIG.EXCLUDE_KEYWORDS, options.minYear !== undefined ? options.minYear : null);
+
+      // If no models found, try a different approach - direct search
+      if (models.length === 0) {
+        logProgress('No models found with standard selectors, trying direct search approach', 'warn');
+        
+        // Extract brand name from URL
+        const brandName = brand.name || brand.url.split('/').pop().replace('.php', '');
+        
+        // Navigate to search page with brand name
+        await this.page.goto(`https://www.gsmarena.com/results.php3?sQuickSearch=yes&sName=${brandName}`, {
+          waitUntil: 'networkidle2',
+          timeout: 30000
         });
         
-        return models;
-      }, CONFIG.EXCLUDE_KEYWORDS, options.minYear !== undefined ? options.minYear : null);
+        await delay(2000);
+        
+        // Extract search results
+        const searchResults = await this.page.evaluate((excludeKeywords, minYear) => {
+          const resultElements = document.querySelectorAll('.makers li a, .st-text a');
+          
+          if (resultElements.length === 0) {
+            return [];
+          }
+          
+          return Array.from(resultElements)
+            .map(el => {
+              const name = el.innerText.trim();
+              const href = el.href;
+              
+              // Skip non-device links
+              if (!href || (!href.includes('gsmarena.com') && !href.startsWith('/'))) {
+                return null;
+              }
+              
+              // Check if device should be excluded
+              const shouldExclude = excludeKeywords.some(keyword => 
+                name.toLowerCase().includes(keyword)
+              );
+              
+              if (shouldExclude) return null;
+              
+              // Extract year
+              const yearMatch = name.match(/(\d{4})/);
+              const year = yearMatch ? parseInt(yearMatch[1]) : null;
+              
+              // Filter by year (if minYear is specified, otherwise include all)
+              if (minYear === null || !year || year >= minYear) {
+                return {
+                  name: name,
+                  url: href,
+                  year: year,
+                  persian_name: name
+                };
+              }
+              return null;
+            })
+            .filter(Boolean); // Remove null entries
+        }, CONFIG.EXCLUDE_KEYWORDS, options.minYear !== undefined ? options.minYear : null);
+        
+        if (searchResults && searchResults.length > 0) {
+          logProgress(`Found ${searchResults.length} models via search approach`, 'info');
+          models.push(...searchResults);
+        }
+      }
 
       logProgress(`Found ${models.length} phone models for ${brand.persian_name}`, 'success');
       return models;
