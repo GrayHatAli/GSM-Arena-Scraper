@@ -49,53 +49,8 @@ export class ScraperService {
   }
 
   /**
-   * Scrape all brands and models
-   * @param {Object} options - Scraping options
-   * @returns {Object} - Scraping result
-   */
-  async scrapeAll(options = {}) {
-    this.isRunning = true;
-    this.currentStatus = 'scraping_all';
-    
-    try {
-      await this.init();
-      
-      const brands = await this.getAvailableBrands();
-      // If no brands specified, scrape all available brands
-      const targetBrands = options.brands || brands.map(b => b.name);
-      const filteredBrands = brands.filter(brand => targetBrands.includes(brand.name));
-      
-      const result = {
-        brands: [],
-        scraped_at: new Date().toISOString(),
-        total_brands: 0,
-        total_models: 0,
-        options: options
-      };
-
-      for (const brand of filteredBrands) {
-        const brandData = await this.scrapeBrand(brand, options);
-        result.brands.push(brandData);
-        result.total_models += brandData.models.length;
-        
-        await delay(CONFIG.DELAYS.between_brands);
-      }
-
-      result.total_brands = result.brands.length;
-      this.currentStatus = 'completed';
-      
-      return result;
-    } catch (error) {
-      this.currentStatus = 'error';
-      throw error;
-    } finally {
-      this.isRunning = false;
-    }
-  }
-
-  /**
-   * Scrape specific brands
-   * @param {Array} brands - Array of brand names
+   * Scrape specific brands (or all brands if none specified)
+   * @param {Array} brands - Array of brand names (optional - if empty, scrape all)
    * @param {Object} options - Scraping options
    * @returns {Object} - Scraping result
    */
@@ -107,7 +62,13 @@ export class ScraperService {
       await this.init();
       
       const allBrands = await this.getAvailableBrands();
-      const targetBrands = allBrands.filter(brand => brands.includes(brand.name));
+      
+      // If no brands specified or empty array, scrape all available brands
+      const targetBrands = (!brands || brands.length === 0) 
+        ? allBrands.map(b => b.name) 
+        : brands;
+      
+      const filteredBrands = allBrands.filter(brand => targetBrands.includes(brand.name));
       
       const result = {
         brands: [],
@@ -278,7 +239,7 @@ export class ScraperService {
       models: []
     };
 
-    const modelsPerBrand = options.modelsPerBrand || CONFIG.MODELS_PER_BRAND;
+    const modelsPerBrand = options.modelsPerBrand || models.length; // If not specified, scrape all models
     const modelsToProcess = models.slice(0, modelsPerBrand);
     
     for (const model of modelsToProcess) {

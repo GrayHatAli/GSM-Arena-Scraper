@@ -245,8 +245,8 @@ class GSMArenaScraper {
       models: []
     };
 
-    // Process models (limit to configured number)
-    const modelsToProcess = models.slice(0, CONFIG.MODELS_PER_BRAND);
+    // Process models (all models by default)
+    const modelsToProcess = models; // Process all models by default
     
     for (const model of modelsToProcess) {
       logProgress(`  Processing model: ${model.name}`, 'info');

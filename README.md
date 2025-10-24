@@ -51,12 +51,8 @@ npm start
 
 ### Brands
 - `GET /brands` - Get available brands
-- `POST /brands/scrape` - Scrape specific brands
+- `POST /brands/scrape` - Scrape brands (all brands if none specified)
 - `POST /brands/:brandName/scrape` - Scrape brand models
-
-### Scraping
-- `POST /scrape/all` - Scrape all brands
-- `POST /scrape/test` - Test scraping with single brand
 
 ### Data
 - `GET /data/latest` - Get latest scraped data
@@ -66,22 +62,17 @@ npm start
 
 ### Scrape All Brands (No Filtering)
 ```bash
-curl -X POST http://localhost:3002/scrape/all \
+curl -X POST http://localhost:3002/brands/scrape \
   -H "Content-Type: application/json" \
-  -d '{
-    "options": {
-      "modelsPerBrand": 10
-    }
-  }'
+  -d '{}'
 ```
 
 ### Scrape All Brands with Year Filter
 ```bash
-curl -X POST http://localhost:3002/scrape/all \
+curl -X POST http://localhost:3002/brands/scrape \
   -H "Content-Type: application/json" \
   -d '{
     "options": {
-      "modelsPerBrand": 10,
       "minYear": 2022
     }
   }'
@@ -89,25 +80,25 @@ curl -X POST http://localhost:3002/scrape/all \
 
 ### Scrape Specific Brands Only
 ```bash
-curl -X POST http://localhost:3002/scrape/all \
+curl -X POST http://localhost:3002/brands/scrape \
   -H "Content-Type: application/json" \
   -d '{
+    "brands": ["apple", "samsung", "xiaomi"],
     "options": {
-      "brands": ["apple", "samsung", "xiaomi"],
-      "modelsPerBrand": 5,
       "minYear": 2020
     }
   }'
 ```
 
-### Scrape Specific Brands
+### Scrape Limited Models Per Brand
 ```bash
 curl -X POST http://localhost:3002/brands/scrape \
   -H "Content-Type: application/json" \
   -d '{
     "brands": ["apple", "samsung"],
     "options": {
-      "modelsPerBrand": 5
+      "modelsPerBrand": 5,
+      "minYear": 2022
     }
   }'
 ```
@@ -162,9 +153,13 @@ The API returns data in a simple, standardized format:
 The scraper now supports flexible filtering options that can be customized per request:
 
 ### Brand Selection
-- **All Brands**: Don't specify `brands` in options to scrape all available brands
+- **All Brands**: Don't specify `brands` in request body to scrape all available brands
 - **Specific Brands**: Specify `brands: ["apple", "samsung", "xiaomi"]` to scrape only selected brands
 - **Available Brands**: Use `GET /brands` endpoint to see all available brands
+
+### Model Selection
+- **All Models**: Don't specify `modelsPerBrand` to scrape all models for each brand
+- **Limited Models**: Specify `modelsPerBrand: 5` to scrape only 5 models per brand
 
 ### Year Filtering
 - **No Filtering**: Don't specify `minYear` to include all devices regardless of release year
@@ -173,23 +168,30 @@ The scraper now supports flexible filtering options that can be customized per r
 
 ### Example Combinations
 ```bash
-# Scrape everything (all brands, all years)
-curl -X POST http://localhost:3002/scrape/all -d '{"options": {"modelsPerBrand": 5}}'
+# Scrape everything (all brands, all models, all years)
+curl -X POST http://localhost:3002/brands/scrape -d '{}'
 
 # Scrape only Apple and Samsung from 2020 onwards
-curl -X POST http://localhost:3002/scrape/all -d '{
+curl -X POST http://localhost:3002/brands/scrape -d '{
+  "brands": ["apple", "samsung"],
   "options": {
-    "brands": ["apple", "samsung"],
-    "minYear": 2020,
-    "modelsPerBrand": 10
+    "minYear": 2020
   }
 }'
 
 # Scrape all brands but only recent devices
-curl -X POST http://localhost:3002/scrape/all -d '{
+curl -X POST http://localhost:3002/brands/scrape -d '{
   "options": {
-    "minYear": 2023,
-    "modelsPerBrand": 15
+    "minYear": 2023
+  }
+}'
+
+# Scrape specific brands with limited models per brand
+curl -X POST http://localhost:3002/brands/scrape -d '{
+  "brands": ["apple", "samsung"],
+  "options": {
+    "modelsPerBrand": 5,
+    "minYear": 2022
   }
 }'
 ```
@@ -235,12 +237,12 @@ const axios = require('axios');
 
 async function getGSMData() {
   try {
-    // Scrape all brands without year filtering
-    const response = await axios.post('http://your-scraper-host:3002/scrape/all', {
+    // Scrape all brands and all models without year filtering
+    const response = await axios.post('http://your-scraper-host:3002/brands/scrape', {
+      brands: ['apple', 'samsung', 'xiaomi'], // Optional: specify brands
       options: { 
-        modelsPerBrand: 10,
-        brands: ['apple', 'samsung', 'xiaomi'], // Optional: specify brands
         minYear: 2022 // Optional: filter by year
+        // modelsPerBrand not specified = scrape all models
       }
     });
     return response.data;
@@ -256,13 +258,13 @@ import requests
 
 def get_gsm_data():
     try:
-        # Scrape all brands without year filtering
-        response = requests.post('http://your-scraper-host:3002/scrape/all', 
+        # Scrape all brands and all models without year filtering
+        response = requests.post('http://your-scraper-host:3002/brands/scrape', 
                                 json={
+                                    'brands': ['apple', 'samsung', 'xiaomi'],  # Optional: specify brands
                                     'options': {
-                                        'modelsPerBrand': 10,
-                                        'brands': ['apple', 'samsung', 'xiaomi'],  # Optional: specify brands
                                         'minYear': 2022  # Optional: filter by year
+                                        # modelsPerBrand not specified = scrape all models
                                     }
                                 })
         return response.json()
@@ -275,10 +277,10 @@ def get_gsm_data():
 <?php
 function getGSMData() {
     $data = [
+        'brands' => ['apple', 'samsung', 'xiaomi'], // Optional: specify brands
         'options' => [
-            'modelsPerBrand' => 10,
-            'brands' => ['apple', 'samsung', 'xiaomi'], // Optional: specify brands
             'minYear' => 2022 // Optional: filter by year
+            // modelsPerBrand not specified = scrape all models
         ]
     ];
     $options = [
@@ -290,7 +292,7 @@ function getGSMData() {
     ];
     
     $context = stream_context_create($options);
-    $result = file_get_contents('http://your-scraper-host:3002/scrape/all', false, $context);
+    $result = file_get_contents('http://your-scraper-host:3002/brands/scrape', false, $context);
     return json_decode($result, true);
 }
 ?>

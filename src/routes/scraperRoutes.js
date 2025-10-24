@@ -25,7 +25,6 @@ export class ScraperRoutes {
       'POST /brands/:brandName/scrape': this.scrapeBrandModels.bind(this),
       
       // Scraping endpoints
-      'POST /scrape/all': this.scrapeAll.bind(this),
       'POST /scrape/test': this.testScraping.bind(this),
       
       // Data endpoints
@@ -93,7 +92,7 @@ export class ScraperRoutes {
   }
 
   /**
-   * Scrape specific brands
+   * Scrape brands (all brands if none specified)
    * @param {Object} req - Request object
    * @param {Object} res - Response object
    */
@@ -101,15 +100,8 @@ export class ScraperRoutes {
     try {
       const { brands, options = {} } = req.body;
       
-      if (!brands || !Array.isArray(brands) || brands.length === 0) {
-        return res.status(400).json({
-          success: false,
-          message: 'Brands array is required',
-          error: 'Invalid brands parameter'
-        });
-      }
-
-      const result = await this.controller.scrapeBrands(brands, options);
+      // brands is now optional - if not provided, scrape all brands
+      const result = await this.controller.scrapeBrands(brands || [], options);
       res.json(result);
     } catch (error) {
       res.status(500).json({
@@ -144,27 +136,6 @@ export class ScraperRoutes {
       res.status(500).json({
         success: false,
         message: 'Failed to scrape brand models',
-        error: error.message
-      });
-    }
-  }
-
-  /**
-   * Scrape all brands
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
-   */
-  async scrapeAll(req, res) {
-    try {
-      const { options = {} } = req.body;
-      
-      // Use actual scraping instead of mock data
-      const result = await this.controller.scrapeAll(options);
-      res.json(result);
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: 'Failed to scrape all brands',
         error: error.message
       });
     }

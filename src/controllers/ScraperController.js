@@ -9,20 +9,6 @@ export class ScraperController {
   }
 
   /**
-   * Scrape all brands and models
-   * @param {Object} options - Scraping options
-   * @returns {Object} - Scraping result
-   */
-  async scrapeAll(options = {}) {
-    try {
-      const result = await this.scraperService.scrapeAll(options);
-      return ResponseHelper.success('Scraping completed successfully', result);
-    } catch (error) {
-      return ResponseHelper.error('Scraping failed', error.message);
-    }
-  }
-
-  /**
    * Scrape specific brands
    * @param {Array} brands - Array of brand names
    * @param {Object} options - Scraping options
