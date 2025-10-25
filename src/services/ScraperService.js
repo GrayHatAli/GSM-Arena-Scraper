@@ -36,6 +36,23 @@ export class ScraperService {
   }
 
   /**
+   * Extract year from "Announced" field
+   * @param {string} announced - Announced field value
+   * @returns {number|null} - Extracted year or null
+   */
+  extractYearFromAnnounced(announced) {
+    if (!announced) return null;
+    
+    // Look for 4-digit year patterns
+    const yearMatch = announced.match(/\b(20\d{2})\b/);
+    if (yearMatch) {
+      return parseInt(yearMatch[1], 10);
+    }
+    
+    return null;
+  }
+
+  /**
    * Get all available brands from GSM Arena
    * @returns {Promise<Array>} - Array of brand objects
    */
@@ -62,7 +79,6 @@ export class ScraperService {
           name,
           url,
           logo_url: logoUrl,
-          persian_name: name,
           is_active: true
         });
       }
@@ -174,10 +190,7 @@ export class ScraperService {
                 }
               }
               
-              // Apply minYear filter if specified
-              if (options.minYear && extractedYear && extractedYear < options.minYear) {
-                continue;
-              }
+              // Note: minYear filter will be applied later after getting specifications
               
               // Apply keyword exclusion if specified
               if (options.excludeKeywords && options.excludeKeywords.length > 0) {
@@ -193,8 +206,7 @@ export class ScraperService {
               tempDevices.push({
                 name,
                 url,
-                year: extractedYear,
-                persian_name: name
+                year: extractedYear
               });
             }
             
@@ -238,9 +250,10 @@ export class ScraperService {
   /**
    * Get device specifications
    * @param {Object} device - Device object with URL
+   * @param {Object} options - Options including minYear filter
    * @returns {Promise<Object>} - Device specifications
    */
-  async getDeviceSpecifications(device) {
+  async getDeviceSpecifications(device, options = {}) {
     try {
       logProgress(`Getting specifications for device: ${device.name}`, 'info');
       
@@ -364,6 +377,15 @@ export class ScraperService {
         }
       }
       
+      // Apply minYear filter based on "Announced" field
+      if (options.minYear && processedSpecs['Announced']) {
+        const announcedYear = this.extractYearFromAnnounced(processedSpecs['Announced']);
+        if (announcedYear && announcedYear < options.minYear) {
+          logProgress(`Device ${device.name} announced in ${announcedYear}, filtered out by minYear ${options.minYear}`, 'info');
+          return null; // Return null to indicate this device should be filtered out
+        }
+      }
+      
       return {
         specifications: processedSpecs,
         image_url: imageUrl,
@@ -408,12 +430,17 @@ export class ScraperService {
         try {
           logProgress(`  Getting details for: ${device.name}`, 'info');
           
-          const deviceSpecs = await this.getDeviceSpecifications(device);
+          const deviceSpecs = await this.getDeviceSpecifications(device, options);
+          
+          // Skip device if it was filtered out by minYear
+          if (deviceSpecs === null) {
+            logProgress(`  Skipping device ${device.name} due to minYear filter`, 'info');
+            continue;
+          }
           
           models.push({
             brand_name: brand.name,
             model_name: device.name,
-            persian_name: device.persian_name || device.name,
             series: device.name.split(' ')[0],
             ram_options: deviceSpecs.ram_options || [6, 8],
             storage_options: deviceSpecs.storage_options || [128, 256],
@@ -434,7 +461,6 @@ export class ScraperService {
           models.push({
             brand_name: brand.name,
             model_name: device.name,
-            persian_name: device.persian_name || device.name,
             series: device.name.split(' ')[0],
             ram_options: [6, 8],
             storage_options: [128, 256],
@@ -449,7 +475,6 @@ export class ScraperService {
       
       return {
         name: brand.name,
-        persian_name: brand.persian_name || brand.name.charAt(0).toUpperCase() + brand.name.slice(1),
         logo_url: brand.logo_url || `${this.baseUrl}/img/logo_${brand.name}.png`,
         is_active: true,
         models: models
@@ -458,7 +483,6 @@ export class ScraperService {
       logProgress(`Error scraping brand ${brand.name}: ${error.message}`, 'error');
       return {
         name: brand.name,
-        persian_name: brand.persian_name || brand.name.charAt(0).toUpperCase() + brand.name.slice(1),
         logo_url: brand.logo_url || `${this.baseUrl}/img/logo_${brand.name}.png`,
         models: [],
         is_active: false,
@@ -487,7 +511,6 @@ export class ScraperService {
         if (typeof brand === 'string') {
           brandObj = {
             name: brand,
-            persian_name: brand.charAt(0).toUpperCase() + brand.slice(1),
             url: `${this.baseUrl}/${brand}-phones-48.php`,
             is_active: true
           };
@@ -536,11 +559,10 @@ export class ScraperService {
     // This method expects a device ID, but we need to construct the device object
     const device = {
       name: `Device ${deviceId}`,
-      url: `${this.baseUrl}/device-${deviceId}.php`,
-      persian_name: `Device ${deviceId}`
+      url: `${this.baseUrl}/device-${deviceId}.php`
     };
     
-    return this.getDeviceSpecifications(device);
+    return this.getDeviceSpecifications(device, {});
   }
 
   /**
