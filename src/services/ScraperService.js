@@ -292,13 +292,39 @@ export class ScraperService {
         }
       }
       
+      // Post-process specifications to fix naming and remove unwanted entries
+      const processedSpecs = {};
+      for (const [key, value] of Object.entries(specSections)) {
+        // Skip endurance entries (they're not useful)
+        if (key.toLowerCase().includes('endurance') || value.toLowerCase().includes('endurance')) {
+          continue;
+        }
+        
+        // Handle battery-related entries
+        if (key.toLowerCase() === 'type' && value.toLowerCase().includes('mah')) {
+          // This is battery type, rename to "Battery"
+          processedSpecs['Battery'] = value;
+        } else if (key.toLowerCase() === 'energy' && value.toLowerCase().includes('mah')) {
+          // This is also battery-related, rename to "Battery"
+          processedSpecs['Battery'] = value;
+        } else if (key.toLowerCase() === 'type' && !value.toLowerCase().includes('mah')) {
+          // This is display type, keep as "Display Type"
+          processedSpecs['Display Type'] = value;
+        } else if (key.toLowerCase() === 'energy' && !value.toLowerCase().includes('mah')) {
+          // This is energy efficiency rating, skip it
+          continue;
+        } else {
+          processedSpecs[key] = value;
+        }
+      }
+      
       // Extract RAM, storage, and color options from specifications
       const ramOptions = [];
       const storageOptions = [];
       const colorOptions = [];
       
         // Look for RAM in the specifications
-        for (const [key, value] of Object.entries(specSections)) {
+        for (const [key, value] of Object.entries(processedSpecs)) {
           if (key.toLowerCase().includes('ram') || key.toLowerCase().includes('memory') || key.toLowerCase().includes('internal')) {
             const ramMatches = value.match(/\b(\d+)\s*GB\s*RAM\b/gi);
             if (ramMatches) {
@@ -339,7 +365,7 @@ export class ScraperService {
       }
       
       return {
-        specifications: specSections,
+        specifications: processedSpecs,
         image_url: imageUrl,
         ram_options: ramOptions,
         storage_options: storageOptions,
