@@ -311,12 +311,16 @@ export class ScraperService {
             }
           }
         
-        // Look for storage
+        // Look for storage (exclude RAM patterns)
         if (key.toLowerCase().includes('internal') || key.toLowerCase().includes('storage')) {
-          const storageMatches = value.match(/\b(\d+)\s*(GB|TB)\b/gi);
+          // First remove RAM patterns to avoid confusion
+          const valueWithoutRAM = value.replace(/\b(\d+)\s*GB\s*RAM\b/gi, '');
+          const storageMatches = valueWithoutRAM.match(/\b(\d+)\s*(GB|TB)\b/gi);
           if (storageMatches) {
             storageMatches.forEach(storage => {
-              if (!storageOptions.includes(storage)) {
+              // Additional filter to exclude common RAM sizes from storage
+              const size = storage.replace(/\D/g, '');
+              if (size && !['4', '6', '8', '12', '16'].includes(size) && !storageOptions.includes(storage)) {
                 storageOptions.push(storage);
               }
             });
