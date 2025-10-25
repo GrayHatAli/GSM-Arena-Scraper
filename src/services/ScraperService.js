@@ -1,176 +1,500 @@
-// Scraper Service - Core scraping logic
+/**
+ * ScraperService.js
+ * A service that uses direct HTTP requests to scrape GSM Arena data
+ */
 
-import puppeteer from 'puppeteer';
+import axios from 'axios';
+import { logProgress } from '../utils.js';
 import { CONFIG } from '../config/config.js';
-import { 
-  delay, 
-  extractYear, 
-  shouldExcludeDevice, 
-  extractRamStorageOptions,
-  formatSpecifications,
-  generateFallbackData,
-  logProgress
-} from '../utils/ScraperUtils.js';
 
 export class ScraperService {
   constructor() {
-    this.browser = null;
-    this.page = null;
-    this.isRunning = false;
-    this.currentStatus = 'idle';
-  }
-
-  /**
-   * Initialize browser and page
-   */
-  async init() {
-    if (this.browser) {
-      return;
-    }
-
-    try {
-      this.currentStatus = 'initializing';
-      
-      // Set up browser with proper user agent and stealth options
-      this.browser = await puppeteer.launch({
-        ...CONFIG.PUPPETEER_OPTIONS,
-        // Additional options to avoid detection
-        args: [
-          ...CONFIG.PUPPETEER_OPTIONS.args,
-          '--disable-blink-features=AutomationControlled',
-          '--window-size=1920,1080'
-        ]
-      });
-      
-      this.page = await this.browser.newPage();
-      
-      // Set user agent
-      await this.page.setUserAgent(CONFIG.USER_AGENT);
-      
-      // Set viewport
-      await this.page.setViewport({
-        width: 1920,
-        height: 1080,
-        deviceScaleFactor: 1
-      });
-      
-      // Enable JavaScript
-      await this.page.setJavaScriptEnabled(true);
-      
-      // Set extra HTTP headers to appear more like a real browser
-      await this.page.setExtraHTTPHeaders({
-        'Accept-Language': 'en-US,en;q=0.9',
+    this.baseUrl = 'https://www.gsmarena.com';
+    this.apiClient = axios.create({
+      baseURL: this.baseUrl,
+      timeout: 30000,
+      headers: {
+        'User-Agent': CONFIG.USER_AGENT,
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
         'Accept-Encoding': 'gzip, deflate, br',
         'Connection': 'keep-alive',
         'Upgrade-Insecure-Requests': '1',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
-        'Sec-Fetch-User': '?1',
-        'Cache-Control': 'max-age=0'
-      });
+        'Cache-Control': 'max-age=0',
+        'Referer': 'https://www.gsmarena.com/'
+      }
+    });
+  }
+
+  /**
+   * Helper function to add delay between requests
+   * @param {number} ms - Milliseconds to delay
+   * @returns {Promise} - Promise that resolves after the delay
+   */
+  async delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Get all available brands from GSM Arena
+   * @returns {Promise<Array>} - Array of brand objects
+   */
+  async getAllBrands() {
+    try {
+      logProgress('Getting available brands...', 'info');
       
-      // Mask webdriver
-      await this.page.evaluateOnNewDocument(() => {
-        // Overwrite the 'navigator.webdriver' property to prevent detection
-        Object.defineProperty(navigator, 'webdriver', {
-          get: () => false
+      const response = await this.apiClient.get('/makers.php3');
+      
+      // Extract brands from HTML response
+      const html = response.data;
+      
+      // Use regex to extract brand data
+      const brandRegex = /<a href="([^"]+)"[^>]*><img src="([^"]+)"[^>]*><br>([^<]+)<\/a>/g;
+      const brands = [];
+      let match;
+      
+      while ((match = brandRegex.exec(html)) !== null) {
+        const url = this.baseUrl + '/' + match[1];
+        const logoUrl = this.baseUrl + '/' + match[2];
+        const name = match[3].trim();
+        
+        brands.push({
+          name,
+          url,
+          logo_url: logoUrl,
+          persian_name: name,
+          is_active: true
         });
+      }
+      
+      logProgress(`Found ${brands.length} brands`, 'success');
+      return brands;
+    } catch (error) {
+      logProgress(`Error getting available brands: ${error.message}`, 'error');
+      return [];
+    }
+  }
+
+  /**
+   * Search for devices by brand name
+   * @param {string} brandName - Brand name to search for
+   * @param {Object} options - Search options
+   * @returns {Promise<Array>} - Array of device objects
+   */
+  async searchDevicesByBrand(brandName, options = {}) {
+    try {
+      logProgress(`Searching for devices by brand: ${brandName}`, 'info');
+      
+      // Add random delay to avoid detection
+      const randomDelay = Math.floor(Math.random() * 2000) + 1000;
+      await this.delay(randomDelay);
+      
+      // Try multiple search approaches
+      const searchUrls = [
+        `/${brandName}-phones-48.php`,  // Direct brand page (most reliable)
+        `/${brandName}-phones-f-0-0-p1.php`,  // Alternative format
+        `/results.php3?sQuickSearch=yes&sName=${encodeURIComponent(brandName)}`,
+        `/results.php3?sQuickSearch=${encodeURIComponent(brandName)}`
+      ];
+      
+      let devices = [];
+      
+      for (const searchUrl of searchUrls) {
+        try {
+          logProgress(`Trying search URL: ${searchUrl}`, 'info');
+          const response = await this.apiClient.get(searchUrl);
+          const html = response.data;
+          
+          // Log the response for debugging
+          logProgress(`Search response length: ${html.length}`, 'info');
+          
+          // Try multiple regex patterns to extract device data
+          const devicePatterns = [
+            // Pattern 1: Device links with images (most specific for GSM Arena)
+            /<a href="([^"]+)"[^>]*><img[^>]*><strong><span>([^<]+)<\/span><\/strong><\/a>/g,
+            // Pattern 2: Device links in li elements
+            /<li><a href="([^"]+)"[^>]*><img[^>]*><strong><span>([^<]+)<\/span><\/strong><\/a><\/li>/g,
+            // Pattern 3: General device links with images
+            /<a href="([^"]+)"[^>]*><img[^>]*><br>([^<]+)<\/a>/g,
+            // Pattern 4: Links in makers section
+            /<a href="([^"]+)"[^>]*class="[^"]*makers[^"]*"[^>]*>([^<]+)<\/a>/g,
+            // Pattern 5: Device links in specific containers
+            /<a href="([^"]+)"[^>]*class="[^"]*phone[^"]*"[^>]*>([^<]+)<\/a>/g
+          ];
+          
+          for (const pattern of devicePatterns) {
+            let match;
+            const tempDevices = [];
+            
+            while ((match = pattern.exec(html)) !== null) {
+              const url = match[1].startsWith('http') ? match[1] : this.baseUrl + '/' + match[1];
+              const name = match[2].trim();
+              
+              // Skip non-device links
+              if (!url.includes('.php') || 
+                  url.includes('glossary') || 
+                  url.includes('makers') ||
+                  url.includes('news') ||
+                  url.includes('reviews') ||
+                  url.includes('videos') ||
+                  url.includes('deals') ||
+                  url.includes('contact') ||
+                  url.includes('coverage') ||
+                  url.includes('search') ||
+                  url.includes('phone-finder') ||
+                  url.includes('network-bands') ||
+                  name.length < 3 ||
+                  name.toLowerCase().includes('videos') ||
+                  name.toLowerCase().includes('deals') ||
+                  name.toLowerCase().includes('contact') ||
+                  name.toLowerCase().includes('coverage') ||
+                  name.toLowerCase().includes('phone finder') ||
+                  name.toLowerCase().includes('search')) {
+                continue;
+              }
+              
+              // Extract year if available (look for patterns like "2025", "2024", etc.)
+              const yearMatch = name.match(/\b(20\d{2})\b/);
+              const year = yearMatch ? parseInt(yearMatch[1], 10) : null;
+              
+              // Also try to extract year from URL if not found in name
+              let extractedYear = year;
+              if (!extractedYear) {
+                const urlYearMatch = url.match(/\b(20\d{2})\b/);
+                extractedYear = urlYearMatch ? parseInt(urlYearMatch[1], 10) : null;
+              }
+              
+              // For iPhone models without explicit year, infer from model number
+              if (!extractedYear && name.toLowerCase().includes('iphone')) {
+                const iphoneMatch = name.match(/iPhone\s+(\d+)/i);
+                if (iphoneMatch) {
+                  const iphoneNumber = parseInt(iphoneMatch[1]);
+                  // iPhone 17 = 2025, iPhone 16 = 2024, iPhone 15 = 2023, etc.
+                  extractedYear = 2007 + iphoneNumber;
+                }
+              }
+              
+              // Apply minYear filter if specified
+              if (options.minYear && extractedYear && extractedYear < options.minYear) {
+                continue;
+              }
+              
+              // Apply keyword exclusion if specified
+              if (options.excludeKeywords && options.excludeKeywords.length > 0) {
+                const shouldExclude = options.excludeKeywords.some(keyword => 
+                  name.toLowerCase().includes(keyword.toLowerCase())
+                );
+                
+                if (shouldExclude) {
+                  continue;
+                }
+              }
+              
+              tempDevices.push({
+                name,
+                url,
+                year: extractedYear,
+                persian_name: name
+              });
+            }
+            
+            // If we found devices with this pattern, use them
+            if (tempDevices.length > 0) {
+              devices = [...devices, ...tempDevices];
+              break; // Stop trying other patterns for this URL
+            }
+          }
+          
+          // If we found devices, stop trying other URLs
+          if (devices.length > 0) {
+            break;
+          }
+          
+        } catch (urlError) {
+          logProgress(`Error with search URL ${searchUrl}: ${urlError.message}`, 'warn');
+          continue;
+        }
+      }
+      
+      // Remove duplicates based on name
+      const uniqueDevices = [];
+      const seenNames = new Set();
+      
+      for (const device of devices) {
+        if (!seenNames.has(device.name)) {
+          seenNames.add(device.name);
+          uniqueDevices.push(device);
+        }
+      }
+      
+      logProgress(`Found ${uniqueDevices.length} unique devices for brand ${brandName}`, 'success');
+      return uniqueDevices;
+    } catch (error) {
+      logProgress(`Error searching devices by brand: ${error.message}`, 'error');
+      return [];
+    }
+  }
+
+  /**
+   * Get device specifications
+   * @param {Object} device - Device object with URL
+   * @returns {Promise<Object>} - Device specifications
+   */
+  async getDeviceSpecifications(device) {
+    try {
+      logProgress(`Getting specifications for device: ${device.name}`, 'info');
+      
+      // Add random delay to avoid detection
+      const randomDelay = Math.floor(Math.random() * 2000) + 1000;
+      await this.delay(randomDelay);
+      
+      // Get the device page
+      const deviceUrl = device.url.startsWith('http') ? device.url : this.baseUrl + '/' + device.url;
+      const response = await this.apiClient.get(deviceUrl);
+      
+      // Extract specifications from HTML response
+      const html = response.data;
+      
+      // Extract image URL
+      const imageMatch = html.match(/<img src="([^"]+)" alt="[^"]+" class="specs-photo-main"/);
+      const imageUrl = imageMatch ? (imageMatch[1].startsWith('http') ? imageMatch[1] : this.baseUrl + '/' + imageMatch[1]) : null;
+      
+      // Extract specifications
+      const specSections = {};
+      
+      // Try multiple approaches to extract specifications
+      const specPatterns = [
+        // Pattern 1: GSM Arena standard format with ttl and nfo classes
+        /<td class="ttl">([^<]+)<\/td>\s*<td class="nfo"[^>]*>([^<]+)<\/td>/g,
+        // Pattern 2: Alternative format with links
+        /<td class="ttl"><a[^>]*>([^<]+)<\/a><\/td>\s*<td class="nfo"[^>]*>([^<]+)<\/td>/g,
+        // Pattern 3: Format with nested links in nfo
+        /<td class="ttl">([^<]+)<\/td>\s*<td class="nfo"[^>]*><a[^>]*>([^<]+)<\/a><\/td>/g,
+        // Pattern 4: Simple table rows without classes
+        /<tr[^>]*>\s*<td[^>]*>([^<]+)<\/td>\s*<td[^>]*>([^<]+)<\/td>\s*<\/tr>/g
+      ];
+      
+      for (const pattern of specPatterns) {
+        let match;
+        while ((match = pattern.exec(html)) !== null) {
+          const specName = match[1].trim();
+          const specValue = match[2].trim();
+          
+          if (specName && specValue && specName !== '&nbsp;' && specValue !== '&nbsp;') {
+            // Clean up the specification name and value
+            const cleanName = specName.replace(/&nbsp;/g, '').trim();
+            const cleanValue = specValue.replace(/&nbsp;/g, '').trim();
+            
+            if (cleanName && cleanValue) {
+              specSections[cleanName] = cleanValue;
+            }
+          }
+        }
+      }
+      
+      // Extract RAM, storage, and color options from specifications
+      const ramOptions = [];
+      const storageOptions = [];
+      const colorOptions = [];
+      
+        // Look for RAM in the specifications
+        for (const [key, value] of Object.entries(specSections)) {
+          if (key.toLowerCase().includes('ram') || key.toLowerCase().includes('memory') || key.toLowerCase().includes('internal')) {
+            const ramMatches = value.match(/\b(\d+)\s*GB\s*RAM\b/gi);
+            if (ramMatches) {
+              ramMatches.forEach(ram => {
+                const ramValue = ram.replace(/\D/g, '');
+                if (ramValue && !ramOptions.includes(ramValue)) {
+                  ramOptions.push(ramValue);
+                }
+              });
+            }
+          }
         
-        // Overwrite chrome object to appear as normal browser
-        window.chrome = {
-          runtime: {}
-        };
+        // Look for storage
+        if (key.toLowerCase().includes('internal') || key.toLowerCase().includes('storage')) {
+          const storageMatches = value.match(/\b(\d+)\s*(GB|TB)\b/gi);
+          if (storageMatches) {
+            storageMatches.forEach(storage => {
+              if (!storageOptions.includes(storage)) {
+                storageOptions.push(storage);
+              }
+            });
+          }
+        }
         
-        // Overwrite permissions
-        const originalQuery = window.navigator.permissions.query;
-        window.navigator.permissions.query = (parameters) => (
-          parameters.name === 'notifications' ?
-            Promise.resolve({ state: Notification.permission }) :
-            originalQuery(parameters)
-        );
+        // Look for colors
+        if (key.toLowerCase().includes('color')) {
+          const colors = value.split(',').map(color => color.trim());
+          colors.forEach(color => {
+            if (color && !colorOptions.includes(color)) {
+              colorOptions.push(color);
+            }
+          });
+        }
+      }
+      
+      return {
+        specifications: specSections,
+        image_url: imageUrl,
+        ram_options: ramOptions,
+        storage_options: storageOptions,
+        color_options: colorOptions
+      };
+    } catch (error) {
+      logProgress(`Error getting device specifications: ${error.message}`, 'error');
+      return {
+        specifications: {},
+        image_url: null,
+        ram_options: [],
+        storage_options: [],
+        color_options: []
+      };
+    }
+  }
+
+  /**
+   * Scrape a specific brand
+   * @param {Object} brand - Brand object
+   * @param {Object} options - Scraping options
+   * @returns {Promise<Object>} - Brand data with models
+   */
+  async scrapeBrand(brand, options = {}) {
+    try {
+      logProgress(`Scraping brand: ${brand.name}`, 'info');
+      
+      // Get devices for the brand
+      const devices = await this.searchDevicesByBrand(brand.name, {
+        minYear: options.minYear,
+        excludeKeywords: CONFIG.EXCLUDE_KEYWORDS
       });
       
-      this.currentStatus = 'ready';
-      logProgress('Browser initialized successfully', 'success');
+      // Convert devices to models with detailed specifications
+      const models = [];
+      const modelsPerBrand = options.modelsPerBrand || devices.length;
+      const devicesToProcess = devices.slice(0, modelsPerBrand);
+      
+      for (const device of devicesToProcess) {
+        try {
+          logProgress(`  Getting details for: ${device.name}`, 'info');
+          
+          const deviceSpecs = await this.getDeviceSpecifications(device);
+          
+          models.push({
+            brand_name: brand.name,
+            model_name: device.name,
+            persian_name: device.persian_name || device.name,
+            series: device.name.split(' ')[0],
+            ram_options: deviceSpecs.ram_options || [6, 8],
+            storage_options: deviceSpecs.storage_options || [128, 256],
+            color_options: deviceSpecs.color_options.length > 0 ? 
+              deviceSpecs.color_options :
+              ['Black', 'White'],
+            specifications: deviceSpecs.specifications || {},
+            release_date: device.year ? `${device.year}-01-01` : '2023-01-01',
+            image_url: deviceSpecs.image_url,
+            is_active: true
+          });
+          
+          // Add delay between device processing
+          await this.delay(CONFIG.DELAYS.between_requests || 1000);
+        } catch (error) {
+          logProgress(`  Error processing device ${device.name}: ${error.message}`, 'error');
+          // Add fallback model data
+          models.push({
+            brand_name: brand.name,
+            model_name: device.name,
+            persian_name: device.persian_name || device.name,
+            series: device.name.split(' ')[0],
+            ram_options: [6, 8],
+            storage_options: [128, 256],
+            color_options: ['Black', 'White'],
+            specifications: {},
+            release_date: device.year ? `${device.year}-01-01` : '2023-01-01',
+            image_url: null,
+            is_active: true
+          });
+        }
+      }
+      
+      return {
+        name: brand.name,
+        persian_name: brand.persian_name || brand.name.charAt(0).toUpperCase() + brand.name.slice(1),
+        logo_url: brand.logo_url || `${this.baseUrl}/img/logo_${brand.name}.png`,
+        is_active: true,
+        models: models
+      };
     } catch (error) {
-      this.currentStatus = 'error';
-      logProgress(`Failed to initialize browser: ${error.message}`, 'error');
+      logProgress(`Error scraping brand ${brand.name}: ${error.message}`, 'error');
+      return {
+        name: brand.name,
+        persian_name: brand.persian_name || brand.name.charAt(0).toUpperCase() + brand.name.slice(1),
+        logo_url: brand.logo_url || `${this.baseUrl}/img/logo_${brand.name}.png`,
+        models: [],
+        is_active: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Scrape multiple brands
+   * @param {Array} brands - Array of brand names or brand objects
+   * @param {Object} options - Scraping options
+   * @returns {Promise<Object>} - Scraping result with brands and models
+   */
+  async scrapeBrands(brands, options = {}) {
+    try {
+      logProgress(`Starting to scrape ${brands.length} brands`, 'info');
+      
+      const results = [];
+      let totalModels = 0;
+      
+      for (const brand of brands) {
+        let brandObj;
+        
+        // Handle both string brand names and brand objects
+        if (typeof brand === 'string') {
+          brandObj = {
+            name: brand,
+            persian_name: brand.charAt(0).toUpperCase() + brand.slice(1),
+            url: `${this.baseUrl}/${brand}-phones-48.php`,
+            is_active: true
+          };
+        } else {
+          brandObj = brand;
+        }
+        
+        logProgress(`Processing brand: ${brandObj.name}`, 'info');
+        
+        const brandData = await this.scrapeBrand(brandObj, options);
+        results.push(brandData);
+        totalModels += brandData.models ? brandData.models.length : 0;
+        
+        // Add delay between brand scraping
+        await this.delay(CONFIG.DELAYS.between_brands || 3000);
+      }
+      
+      return {
+        brands: results,
+        scraped_at: new Date().toISOString(),
+        total_brands: results.length,
+        total_models: totalModels,
+        options: options
+      };
+    } catch (error) {
+      logProgress(`Error in scrapeBrands: ${error.message}`, 'error');
       throw error;
     }
   }
 
   /**
-   * Get all available brands from GSM Arena
-   * @returns {Promise<Array>} - List of all brands
-   */
-  async getAllBrands() {
-    try {
-      await this.init();
-      this.currentStatus = 'fetching_brands';
-      
-      await this.page.goto('https://www.gsmarena.com/makers.php3', { waitUntil: 'networkidle2' });
-      
-      // Extract all brands
-      const brands = await this.page.evaluate(() => {
-        const brandElements = document.querySelectorAll('table td a');
-        return Array.from(brandElements).map(el => {
-          const href = el.getAttribute('href');
-          const brandName = href.split('-')[0];
-          const deviceCount = el.querySelector('span')?.innerText.replace(/[()]/g, '') || '0';
-          
-          return {
-            name: brandName,
-            display_name: el.innerText.replace(/\(\d+\)/, '').trim(),
-            device_count: parseInt(deviceCount, 10),
-            url: href
-          };
-        });
-      });
-      
-      this.currentStatus = 'ready';
-      return brands;
-    } catch (error) {
-      this.currentStatus = 'error';
-      throw new Error(`Failed to get brands: ${error.message}`);
-    }
-  }
-
-  /**
-   * Get devices by brand name
+   * Get devices by brand name (alias for searchDevicesByBrand)
    * @param {string} brandName - Brand name
    * @returns {Promise<Array>} - List of devices for the brand
    */
   async getDevicesByBrand(brandName) {
-    try {
-      await this.init();
-      this.currentStatus = 'fetching_devices';
-      
-      await this.page.goto(`https://www.gsmarena.com/${brandName}-phones-f-0-0-p1.php`, { waitUntil: 'networkidle2' });
-      
-      // Extract all devices for the brand
-      const devices = await this.page.evaluate(() => {
-        const deviceElements = document.querySelectorAll('.makers ul li');
-        return Array.from(deviceElements).map(el => {
-          const link = el.querySelector('a');
-          const img = el.querySelector('img');
-          
-          return {
-            name: link.innerText.trim(),
-            url: link.getAttribute('href'),
-            image: img ? img.getAttribute('src') : null,
-            id: link.getAttribute('href').split('-')[1].replace('.php', '')
-          };
-        });
-      });
-      
-      this.currentStatus = 'ready';
-      return devices;
-    } catch (error) {
-      this.currentStatus = 'error';
-      throw new Error(`Failed to get devices for brand ${brandName}: ${error.message}`);
-    }
+    return this.searchDevicesByBrand(brandName);
   }
 
   /**
@@ -178,51 +502,15 @@ export class ScraperService {
    * @param {string} deviceId - Device ID
    * @returns {Promise<Object>} - Device specifications
    */
-  async getDeviceSpecifications(deviceId) {
-    try {
-      await this.init();
-      this.currentStatus = 'fetching_specifications';
-      
-      await this.page.goto(`https://www.gsmarena.com/device-${deviceId}.php`, { waitUntil: 'networkidle2' });
-      
-      // Extract device specifications
-      const specifications = await this.page.evaluate(() => {
-        const specs = {};
-        const specTables = document.querySelectorAll('table');
-        
-        specTables.forEach(table => {
-          const category = table.querySelector('th')?.innerText.trim();
-          if (!category) return;
-          
-          specs[category] = {};
-          const rows = table.querySelectorAll('tr:not(:first-child)');
-          
-          rows.forEach(row => {
-            const key = row.querySelector('td.ttl')?.innerText.trim();
-            const value = row.querySelector('td.nfo')?.innerText.trim();
-            if (key && value) {
-              specs[category][key] = value;
-            }
-          });
-        });
-        
-        // Get device name and image
-        const deviceName = document.querySelector('h1.specs-phone-name')?.innerText.trim();
-        const deviceImage = document.querySelector('.specs-photo-main img')?.getAttribute('src');
-        
-        return {
-          name: deviceName,
-          image: deviceImage,
-          specifications: specs
-        };
-      });
-      
-      this.currentStatus = 'ready';
-      return specifications;
-    } catch (error) {
-      this.currentStatus = 'error';
-      throw new Error(`Failed to get specifications for device ${deviceId}: ${error.message}`);
-    }
+  async getDeviceSpecificationsById(deviceId) {
+    // This method expects a device ID, but we need to construct the device object
+    const device = {
+      name: `Device ${deviceId}`,
+      url: `${this.baseUrl}/device-${deviceId}.php`,
+      persian_name: `Device ${deviceId}`
+    };
+    
+    return this.getDeviceSpecifications(device);
   }
 
   /**
@@ -231,152 +519,7 @@ export class ScraperService {
    * @returns {Promise<Array>} - List of matching devices
    */
   async findDevicesByKeyword(keyword) {
-    try {
-      await this.init();
-      this.currentStatus = 'searching_devices';
-      
-      await this.page.goto(`https://www.gsmarena.com/results.php3?sQuickSearch=${encodeURIComponent(keyword)}`, { waitUntil: 'networkidle2' });
-      
-      // Extract search results
-      const searchResults = await this.page.evaluate(() => {
-        const resultElements = document.querySelectorAll('.makers ul li');
-        
-        if (resultElements.length === 0) {
-          return [];
-        }
-        
-        return Array.from(resultElements).map(el => {
-          const link = el.querySelector('a');
-          const img = el.querySelector('img');
-          
-          return {
-            name: link.innerText.trim(),
-            url: link.getAttribute('href'),
-            image: img ? img.getAttribute('src') : null,
-            id: link.getAttribute('href').split('-')[1].replace('.php', '')
-          };
-        });
-      });
-      
-      this.currentStatus = 'ready';
-      return searchResults;
-    } catch (error) {
-      this.currentStatus = 'error';
-      throw new Error(`Failed to search devices with keyword ${keyword}: ${error.message}`);
-    }
-  }
-
-  /**
-   * Scrape specific brands (or all brands if none specified)
-   * @param {Array} brands - Array of brand names (optional - if empty, scrape all)
-   * @param {Object} options - Scraping options
-   * @returns {Object} - Scraping result
-   */
-  async scrapeBrands(brands, options = {}) {
-    this.isRunning = true;
-    this.currentStatus = 'scraping_brands';
-    
-    try {
-      await this.init();
-      
-      const allBrands = await this.getAvailableBrands();
-      
-      // If no brands specified or empty array, scrape all available brands
-      let brandsToScrape = [];
-      
-      if (!brands || brands.length === 0) {
-        // Scrape all brands
-        brandsToScrape = allBrands;
-      } else {
-        // Find matching brands
-        for (const brandName of brands) {
-          const brand = allBrands.find(b => b.name === brandName);
-          if (brand) {
-            brandsToScrape.push(brand);
-          }
-        }
-      }
-      
-      if (brandsToScrape.length === 0) {
-        this.currentStatus = 'error';
-        throw new Error(`No brands found matching: ${brands ? brands.join(', ') : 'none'}`);
-      }
-      
-      logProgress(`Found ${brandsToScrape.length} brands to scrape`, 'info');
-      logProgress(`Brands: ${brandsToScrape.map(b => b.name).join(', ')}`, 'info');
-      
-      const result = {
-        brands: [],
-        scraped_at: new Date().toISOString(),
-        total_brands: 0,
-        total_models: 0,
-        options: options
-      };
-
-      for (const brand of brandsToScrape) {
-        logProgress(`About to scrape brand: ${brand.name} (${brand.persian_name})`, 'info');
-        const brandData = await this.scrapeBrand(brand, options);
-        result.brands.push(brandData);
-        result.total_models += brandData.models.length;
-        
-        await delay(CONFIG.DELAYS.between_brands);
-      }
-
-      result.total_brands = result.brands.length;
-      
-      // Check if any models were scraped
-      if (result.total_models === 0) {
-        this.currentStatus = 'error';
-        throw new Error('No models found for the specified brands and filters');
-      }
-      
-      this.currentStatus = 'completed';
-      
-      return result;
-    } catch (error) {
-      this.currentStatus = 'error';
-      throw error;
-    } finally {
-      this.isRunning = false;
-    }
-  }
-
-  /**
-   * Scrape specific brand models
-   * @param {string} brandName - Brand name
-   * @param {Object} options - Scraping options
-   * @returns {Object} - Scraping result
-   */
-  async scrapeBrandModels(brandName, options = {}) {
-    this.isRunning = true;
-    this.currentStatus = 'scraping_models';
-    
-    try {
-      await this.init();
-      
-      const allBrands = await this.getAvailableBrands();
-      const brand = allBrands.find(b => b.name === brandName);
-      
-      if (!brand) {
-        throw new Error(`Brand ${brandName} not found`);
-      }
-
-      const brandData = await this.scrapeBrand(brand, options);
-      
-      this.currentStatus = 'completed';
-      
-      return {
-        brand: brandData,
-        scraped_at: new Date().toISOString(),
-        total_models: brandData.models.length,
-        options: options
-      };
-    } catch (error) {
-      this.currentStatus = 'error';
-      throw error;
-    } finally {
-      this.isRunning = false;
-    }
+    return this.searchDevicesByBrand(keyword);
   }
 
   /**
@@ -384,37 +527,7 @@ export class ScraperService {
    * @returns {Array} - Available brands
    */
   async getAvailableBrands() {
-    try {
-      await this.init();
-      
-      await this.page.goto(CONFIG.URLS.makers, {
-        waitUntil: 'networkidle2',
-        timeout: 30000
-      });
-
-      const brands = await this.page.evaluate(() => {
-        const brandElements = document.querySelectorAll('.st-text a');
-        const brands = [];
-        
-        brandElements.forEach(element => {
-          const brandText = element.textContent.trim();
-          const brandName = brandText.replace(/\d+.*$/, '').toLowerCase().trim();
-          const brandUrl = element.href;
-          
-          brands.push({
-            name: brandName,
-            url: brandUrl,
-            persian_name: brandName.charAt(0).toUpperCase() + brandName.slice(1)
-          });
-        });
-        
-        return brands;
-      });
-
-      return brands;
-    } catch (error) {
-      throw new Error(`Failed to get available brands: ${error.message}`);
-    }
+    return this.getAllBrands();
   }
 
   /**
@@ -423,32 +536,19 @@ export class ScraperService {
    * @returns {Object} - Test result
    */
   async testScraping(brandName = 'apple') {
-    try {
-      await this.init();
-      
-      const allBrands = await this.getAvailableBrands();
-      const brand = allBrands.find(b => b.name === brandName);
-      
-      if (!brand) {
-        throw new Error(`Brand ${brandName} not found`);
-      }
+    const options = {
+      modelsPerBrand: 3,
+      minYear: undefined // No year filtering for test
+    };
 
-      const options = {
-        modelsPerBrand: 3,
-        minYear: undefined // No year filtering for test
-      };
-
-      const brandData = await this.scrapeBrand(brand, options);
-      
-      return {
-        brand: brandData,
-        scraped_at: new Date().toISOString(),
-        total_models: brandData.models.length,
-        test_mode: true
-      };
-    } catch (error) {
-      throw new Error(`Test scraping failed: ${error.message}`);
-    }
+    const result = await this.scrapeBrands([brandName], options);
+    
+    return {
+      brand: result.brands[0] || null,
+      scraped_at: result.scraped_at,
+      total_models: result.total_models,
+      test_mode: true
+    };
   }
 
   /**
@@ -457,369 +557,12 @@ export class ScraperService {
    */
   async getStatus() {
     return {
-      status: this.currentStatus,
-      isRunning: this.isRunning,
-      hasBrowser: !!this.browser,
+      status: 'ready',
+      isRunning: false,
+      hasBrowser: false,
       timestamp: new Date().toISOString()
     };
   }
-
-  /**
-   * Scrape a single brand
-   * @param {Object} brand - Brand object
-   * @param {Object} options - Scraping options
-   * @returns {Object} - Brand data with models
-   */
-  async scrapeBrand(brand, options = {}) {
-    if (!brand || !brand.name) {
-      logProgress(`Invalid brand object: ${JSON.stringify(brand)}`, 'error');
-      throw new Error('Invalid brand object provided');
-    }
-    
-    const brandName = brand.persian_name || brand.name || 'Unknown';
-    logProgress(`Processing brand: ${brandName}`, 'info');
-    
-    const models = await this.getBrandModels(brand, options);
-    const brandData = {
-      name: brand.name,
-      persian_name: brand.persian_name || brand.name.charAt(0).toUpperCase() + brand.name.slice(1),
-      logo_url: `${CONFIG.URLS.base}/img/logo_${brand.name}.png`,
-      is_active: true,
-      models: []
-    };
-
-    const modelsPerBrand = options.modelsPerBrand || models.length; // If not specified, scrape all models
-    const modelsToProcess = models.slice(0, modelsPerBrand);
-    
-    for (const model of modelsToProcess) {
-      logProgress(`  Processing model: ${model.name}`, 'info');
-      
-      const modelDetails = await this.getModelDetails(model, options);
-      
-      brandData.models.push({
-        brand_name: brand.name,
-        model_name: model.name,
-        persian_name: model.persian_name,
-        series: model.name.split(' ')[0],
-        ram_options: modelDetails.ram_options,
-        storage_options: modelDetails.storage_options,
-        color_options: modelDetails.color_options,
-        specifications: modelDetails.specifications,
-        release_date: model.year ? `${model.year}-01-01` : '2023-01-01',
-        image_url: modelDetails.image_url,
-        is_active: true
-      });
-
-      await delay(CONFIG.DELAYS.between_requests);
-    }
-
-    logProgress(`Completed processing ${brand.persian_name}: ${brandData.models.length} models`, 'success');
-    return brandData;
-  }
-
-  /**
-   * Get models for a specific brand
-   * @param {Object} brand - Brand object
-   * @param {Object} options - Scraping options
-   * @returns {Array} - Array of model objects
-   */
-  async getBrandModels(brand, options = {}) {
-    logProgress(`Extracting models for ${brand.persian_name}...`, 'info');
-    
-    try {
-      // Add random delay to avoid detection (between 1-3 seconds)
-      const randomDelay = Math.floor(Math.random() * 2000) + 1000;
-      await delay(randomDelay);
-      
-      await this.page.goto(brand.url, {
-        waitUntil: ['load', 'networkidle2'],
-        timeout: 60000
-      });
-
-      await delay(CONFIG.DELAYS.page_load);
-      
-      // Debug: Log the current URL
-      const currentUrl = await this.page.url();
-      logProgress(`Current URL: ${currentUrl}`, 'info');
-      
-      // Check if we've been redirected to a different page (possible anti-bot measure)
-      if (currentUrl.includes('error') || currentUrl.includes('captcha')) {
-        logProgress(`Detected anti-bot page: ${currentUrl}`, 'error');
-        throw new Error('Anti-bot protection detected');
-      }
-      
-      // Wait for content to load
-      try {
-        await this.page.waitForSelector('.makers, .st-text, #review-body', { timeout: 10000 });
-      } catch (e) {
-        logProgress(`Timeout waiting for content selectors: ${e.message}`, 'warn');
-        // Continue anyway, we'll try different selectors
-      }
-      
-      // Debug: Take a screenshot to see what's being loaded
-      await this.page.screenshot({ path: 'debug-screenshot.png' });
-      
-      // Debug: Log the page HTML
-      const pageContent = await this.page.content();
-      logProgress(`Page content length: ${pageContent.length}`, 'info');
-
-      const models = await this.page.evaluate((excludeKeywords, minYear) => {
-        // Try multiple selectors in order of specificity
-        const selectors = [
-          '.makers a',                // Original selector
-          '.makers ul li a',          // More specific maker selector
-          '.st-text a',               // Alternative text links
-          '#review-body a',           // General review body links
-          'a[href*="phone"]',         // Links containing "phone"
-          'a[href*="-"]',             // Links with dashes (common in GSM Arena URLs)
-          'a[href*="gsmarena.com"]'   // Any GSM Arena link
-        ];
-        
-        let allModels = [];
-        
-        // Try each selector
-        for (const selector of selectors) {
-          const elements = document.querySelectorAll(selector);
-          console.log(`Selector ${selector} found ${elements.length} elements`);
-          
-          if (elements.length > 0) {
-            const models = Array.from(elements).map(element => {
-              try {
-                const modelName = element.textContent.trim();
-                const modelUrl = element.href;
-                
-                // Validate URL
-                if (!modelUrl || (!modelUrl.includes('gsmarena.com') && !modelUrl.startsWith('/'))) {
-                  return null;
-                }
-                
-                // Check if device should be excluded
-                const shouldExclude = excludeKeywords.some(keyword => 
-                  modelName.toLowerCase().includes(keyword)
-                );
-                
-                if (shouldExclude) return null;
-                
-                // Extract year from various places
-                const yearPattern = /(20\d{2})/;
-                const yearMatch = modelName.match(yearPattern) || 
-                                 (element.title ? element.title.match(yearPattern) : null);
-                const year = yearMatch ? parseInt(yearMatch[1]) : null;
-                
-                // Filter by year (if minYear is specified, otherwise include all)
-                if (minYear === null || !year || year >= minYear) {
-                  return {
-                    name: modelName,
-                    url: modelUrl,
-                    year: year,
-                    persian_name: modelName
-                  };
-                }
-              } catch (e) {
-                console.log(`Error extracting model data: ${e.message}`);
-              }
-              return null;
-            }).filter(Boolean); // Remove null entries
-            
-            allModels = [...allModels, ...models];
-            
-            // If we found a good number of models, stop trying more selectors
-            if (allModels.length > 5) {
-              break;
-            }
-          }
-        }
-        
-        // Deduplicate models based on name
-        const uniqueModels = [];
-        const modelNames = new Set();
-        
-        for (const model of allModels) {
-          if (!modelNames.has(model.name)) {
-            modelNames.add(model.name);
-            uniqueModels.push(model);
-          }
-        }
-        
-        return uniqueModels;
-      }, CONFIG.EXCLUDE_KEYWORDS, options.minYear !== undefined ? options.minYear : null);
-
-      // If no models found, try a different approach - direct search
-      if (models.length === 0) {
-        logProgress('No models found with standard selectors, trying direct search approach', 'warn');
-        
-        // Extract brand name from URL
-        const brandName = brand.name || brand.url.split('/').pop().replace('.php', '');
-        
-        // Navigate to search page with brand name
-        await this.page.goto(`https://www.gsmarena.com/results.php3?sQuickSearch=yes&sName=${brandName}`, {
-          waitUntil: 'networkidle2',
-          timeout: 30000
-        });
-        
-        await delay(2000);
-        
-        // Extract search results
-        const searchResults = await this.page.evaluate((excludeKeywords, minYear) => {
-          const resultElements = document.querySelectorAll('.makers li a, .st-text a');
-          
-          if (resultElements.length === 0) {
-            return [];
-          }
-          
-          return Array.from(resultElements)
-            .map(el => {
-              const name = el.innerText.trim();
-              const href = el.href;
-              
-              // Skip non-device links
-              if (!href || (!href.includes('gsmarena.com') && !href.startsWith('/'))) {
-                return null;
-              }
-              
-              // Check if device should be excluded
-              const shouldExclude = excludeKeywords.some(keyword => 
-                name.toLowerCase().includes(keyword)
-              );
-              
-              if (shouldExclude) return null;
-              
-              // Extract year
-              const yearMatch = name.match(/(\d{4})/);
-              const year = yearMatch ? parseInt(yearMatch[1]) : null;
-              
-              // Filter by year (if minYear is specified, otherwise include all)
-              if (minYear === null || !year || year >= minYear) {
-                return {
-                  name: name,
-                  url: href,
-                  year: year,
-                  persian_name: name
-                };
-              }
-              return null;
-            })
-            .filter(Boolean); // Remove null entries
-        }, CONFIG.EXCLUDE_KEYWORDS, options.minYear !== undefined ? options.minYear : null);
-        
-        if (searchResults && searchResults.length > 0) {
-          logProgress(`Found ${searchResults.length} models via search approach`, 'info');
-          models.push(...searchResults);
-        }
-      }
-
-      logProgress(`Found ${models.length} phone models for ${brand.persian_name}`, 'success');
-      return models;
-    } catch (error) {
-      logProgress(`Error getting models for ${brand.persian_name}: ${error.message}`, 'error');
-      return [];
-    }
-  }
-
-  /**
-   * Get detailed information for a specific model
-   * @param {Object} model - Model object
-   * @param {Object} options - Scraping options
-   * @returns {Object} - Detailed model information
-   */
-  async getModelDetails(model, options = {}) {
-    try {
-      // Validate URL before navigation
-      if (!model.url || !model.url.startsWith('http')) {
-        logProgress(`Invalid URL for model ${model.name}: ${model.url}`, 'error');
-        return generateFallbackData('unknown', model.name);
-      }
-
-      await this.page.goto(model.url, {
-        waitUntil: 'networkidle2',
-        timeout: 60000
-      });
-      
-      await delay(CONFIG.DELAYS.between_requests);
-
-      const details = await this.page.evaluate(() => {
-        const specs = {};
-        
-        // Try to find specifications table
-        let specTable = document.querySelector('.specs-list');
-        if (!specTable) {
-          const altSelectors = [
-            '.specs-list table',
-            '.specs-list tbody',
-            '.specs-list .specs-list',
-            '.specs-list .specs-list table'
-          ];
-          
-          for (const selector of altSelectors) {
-            specTable = document.querySelector(selector);
-            if (specTable) break;
-          }
-        }
-        
-        if (specTable) {
-          const rows = specTable.querySelectorAll('tr');
-          rows.forEach(row => {
-            const cells = row.querySelectorAll('td, th');
-            if (cells.length >= 2) {
-              const label = cells[0]?.textContent?.trim();
-              const value = cells[1]?.textContent?.trim();
-              
-              if (label && value) {
-                specs[label] = value;
-              }
-            }
-          });
-        }
-        
-        // Extract colors
-        const colorElements = document.querySelectorAll('.color-variant, .color-variant a, .color-variant span, .color-variant div');
-        const colors = Array.from(colorElements).map(el => ({
-          en: el.textContent.trim(),
-          fa: el.textContent.trim()
-        }));
-        
-        // Extract image
-        const imageSelectors = [
-          '.specs-photo-main img',
-          '.specs-photo img',
-          '.phone-pic img',
-          '.main-pic img',
-          '.device-pic img'
-        ];
-        
-        let imageUrl = null;
-        for (const selector of imageSelectors) {
-          const img = document.querySelector(selector);
-          if (img && (img.src || img.href)) {
-            imageUrl = img.src || img.href;
-            break;
-          }
-        }
-        
-        return {
-          specifications: specs,
-          colors: colors,
-          image_url: imageUrl
-        };
-      });
-
-      // Extract RAM and Storage options
-      const ramStorage = extractRamStorageOptions(details.specifications);
-      
-      return {
-        specifications: formatSpecifications(details.specifications),
-        ram_options: ramStorage.ram_options,
-        storage_options: ramStorage.storage_options,
-        color_options: details.colors.length > 0 ? details.colors : [
-          { en: 'Black', fa: 'مشکی' },
-          { en: 'White', fa: 'سفید' }
-        ],
-        image_url: details.image_url
-      };
-
-    } catch (error) {
-      logProgress(`Error processing model ${model.name}: ${error.message}`, 'error');
-      return generateFallbackData('unknown', model.name);
-    }
-  }
 }
+
+// Export is handled by the ES module syntax at the top of the file

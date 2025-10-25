@@ -1,12 +1,11 @@
 // Scraper Controller - Handles all scraping operations
 
 import { ScraperService } from '../services/ScraperService.js';
-import { DirectApiService } from '../services/DirectApiService.js';
 import { ResponseHelper } from '../utils/ResponseHelper.js';
 
 export class ScraperController {
   constructor() {
-    this.scraperService = new DirectApiService();
+    this.scraperService = new ScraperService();
   }
 
   /**
@@ -19,17 +18,12 @@ export class ScraperController {
     try {
       const result = await this.scraperService.scrapeBrands(brands, options);
       
-      // Check if any models were scraped
-      if (result.total_models === 0) {
-        return ResponseHelper.error('No models found for the specified brands and filters', {
-          brands: result.brands,
-          total_brands: result.total_brands,
-          total_models: result.total_models,
-          options: result.options
-        });
-      }
+      // Return success even if no models found (this might be valid)
+      const message = result.total_models > 0 
+        ? 'Brand scraping completed successfully' 
+        : 'Brand scraping completed but no models found for the specified filters';
       
-      return ResponseHelper.success('Brand scraping completed successfully', result);
+      return ResponseHelper.success(message, result);
     } catch (error) {
       return ResponseHelper.error('Brand scraping failed', error.message);
     }
@@ -69,7 +63,7 @@ export class ScraperController {
    */
   async getDeviceSpecifications(deviceId) {
     try {
-      const specifications = await this.scraperService.getDeviceSpecifications(deviceId);
+      const specifications = await this.scraperService.getDeviceSpecificationsById(deviceId);
       return ResponseHelper.success('Retrieved device specifications successfully', specifications);
     } catch (error) {
       return ResponseHelper.error('Failed to get device specifications', error.message);

@@ -108,7 +108,13 @@ export class ScraperRoutes {
       
       // brands is now optional - if not provided, scrape all brands
       const result = await this.controller.scrapeBrands(brands || [], options);
-      res.json(result);
+      
+      // Set appropriate HTTP status code based on result
+      if (result.success === false) {
+        res.status(result.statusCode || 400).json(result);
+      } else {
+        res.status(result.statusCode || 200).json(result);
+      }
     } catch (error) {
       res.status(500).json({
         success: false,

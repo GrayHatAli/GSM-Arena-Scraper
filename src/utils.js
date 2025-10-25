@@ -143,10 +143,7 @@ export const generateFallbackData = (brandName, modelName) => {
   return {
     ram_options: [6, 8],
     storage_options: [128, 256],
-    color_options: [
-      { en: 'Black', fa: 'مشکی' },
-      { en: 'White', fa: 'سفید' }
-    ],
+    color_options: ['Black', 'White'],
     specifications: {},
     image_url: null
   };

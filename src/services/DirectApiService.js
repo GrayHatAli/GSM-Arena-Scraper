@@ -1,13 +1,13 @@
 /**
- * DirectApiService.js
- * A service that uses direct API requests to GSM Arena instead of browser scraping
+ * ScraperService.js
+ * A service that uses direct HTTP requests to scrape GSM Arena data
  */
 
 import axios from 'axios';
 import { logProgress } from '../utils.js';
 import { CONFIG } from '../config/config.js';
 
-export class DirectApiService {
+export class ScraperService {
   constructor() {
     this.baseUrl = 'https://www.gsmarena.com';
     this.apiClient = axios.create({
@@ -89,60 +89,146 @@ export class DirectApiService {
       const randomDelay = Math.floor(Math.random() * 2000) + 1000;
       await this.delay(randomDelay);
       
-      // Use the search API
-      const searchUrl = `/results.php3?sQuickSearch=yes&sName=${encodeURIComponent(brandName)}`;
-      const response = await this.apiClient.get(searchUrl);
+      // Try multiple search approaches
+      const searchUrls = [
+        `/${brandName}-phones-48.php`,  // Direct brand page (most reliable)
+        `/${brandName}-phones-f-0-0-p1.php`,  // Alternative format
+        `/results.php3?sQuickSearch=yes&sName=${encodeURIComponent(brandName)}`,
+        `/results.php3?sQuickSearch=${encodeURIComponent(brandName)}`
+      ];
       
-      // Extract devices from HTML response
-      const html = response.data;
+      let devices = [];
       
-      // Log the response for debugging
-      logProgress(`Search response length: ${html.length}`, 'debug');
-      
-      // Use regex to extract device data
-      const deviceRegex = /<a href="([^"]+)"[^>]*>([^<]+)<\/a>/g;
-      const devices = [];
-      let match;
-      
-      while ((match = deviceRegex.exec(html)) !== null) {
-        const url = match[1].startsWith('http') ? match[1] : this.baseUrl + '/' + match[1];
-        const name = match[2].trim();
-        
-        // Skip non-device links
-        if (!url.includes('php') || url.includes('glossary') || url.includes('makers')) {
-          continue;
-        }
-        
-        // Extract year if available
-        const yearMatch = name.match(/\b(20\d{2})\b/);
-        const year = yearMatch ? parseInt(yearMatch[1], 10) : null;
-        
-        // Apply minYear filter if specified
-        if (options.minYear && year && year < options.minYear) {
-          continue;
-        }
-        
-        // Apply keyword exclusion if specified
-        if (options.excludeKeywords && options.excludeKeywords.length > 0) {
-          const shouldExclude = options.excludeKeywords.some(keyword => 
-            name.toLowerCase().includes(keyword.toLowerCase())
-          );
+      for (const searchUrl of searchUrls) {
+        try {
+          logProgress(`Trying search URL: ${searchUrl}`, 'info');
+          const response = await this.apiClient.get(searchUrl);
+          const html = response.data;
           
-          if (shouldExclude) {
-            continue;
+          // Log the response for debugging
+          logProgress(`Search response length: ${html.length}`, 'info');
+          
+          // Try multiple regex patterns to extract device data
+          const devicePatterns = [
+            // Pattern 1: Device links with images (most specific for GSM Arena)
+            /<a href="([^"]+)"[^>]*><img[^>]*><strong><span>([^<]+)<\/span><\/strong><\/a>/g,
+            // Pattern 2: Device links in li elements
+            /<li><a href="([^"]+)"[^>]*><img[^>]*><strong><span>([^<]+)<\/span><\/strong><\/a><\/li>/g,
+            // Pattern 3: General device links with images
+            /<a href="([^"]+)"[^>]*><img[^>]*><br>([^<]+)<\/a>/g,
+            // Pattern 4: Links in makers section
+            /<a href="([^"]+)"[^>]*class="[^"]*makers[^"]*"[^>]*>([^<]+)<\/a>/g,
+            // Pattern 5: Device links in specific containers
+            /<a href="([^"]+)"[^>]*class="[^"]*phone[^"]*"[^>]*>([^<]+)<\/a>/g
+          ];
+          
+          for (const pattern of devicePatterns) {
+            let match;
+            const tempDevices = [];
+            
+            while ((match = pattern.exec(html)) !== null) {
+              const url = match[1].startsWith('http') ? match[1] : this.baseUrl + '/' + match[1];
+              const name = match[2].trim();
+              
+              // Skip non-device links
+              if (!url.includes('.php') || 
+                  url.includes('glossary') || 
+                  url.includes('makers') ||
+                  url.includes('news') ||
+                  url.includes('reviews') ||
+                  url.includes('videos') ||
+                  url.includes('deals') ||
+                  url.includes('contact') ||
+                  url.includes('coverage') ||
+                  url.includes('search') ||
+                  url.includes('phone-finder') ||
+                  url.includes('network-bands') ||
+                  name.length < 3 ||
+                  name.toLowerCase().includes('videos') ||
+                  name.toLowerCase().includes('deals') ||
+                  name.toLowerCase().includes('contact') ||
+                  name.toLowerCase().includes('coverage') ||
+                  name.toLowerCase().includes('phone finder') ||
+                  name.toLowerCase().includes('search')) {
+                continue;
+              }
+              
+              // Extract year if available (look for patterns like "2025", "2024", etc.)
+              const yearMatch = name.match(/\b(20\d{2})\b/);
+              const year = yearMatch ? parseInt(yearMatch[1], 10) : null;
+              
+              // Also try to extract year from URL if not found in name
+              let extractedYear = year;
+              if (!extractedYear) {
+                const urlYearMatch = url.match(/\b(20\d{2})\b/);
+                extractedYear = urlYearMatch ? parseInt(urlYearMatch[1], 10) : null;
+              }
+              
+              // For iPhone models without explicit year, infer from model number
+              if (!extractedYear && name.toLowerCase().includes('iphone')) {
+                const iphoneMatch = name.match(/iPhone\s+(\d+)/i);
+                if (iphoneMatch) {
+                  const iphoneNumber = parseInt(iphoneMatch[1]);
+                  // iPhone 17 = 2025, iPhone 16 = 2024, iPhone 15 = 2023, etc.
+                  extractedYear = 2007 + iphoneNumber;
+                }
+              }
+              
+              // Apply minYear filter if specified
+              if (options.minYear && extractedYear && extractedYear < options.minYear) {
+                continue;
+              }
+              
+              // Apply keyword exclusion if specified
+              if (options.excludeKeywords && options.excludeKeywords.length > 0) {
+                const shouldExclude = options.excludeKeywords.some(keyword => 
+                  name.toLowerCase().includes(keyword.toLowerCase())
+                );
+                
+                if (shouldExclude) {
+                  continue;
+                }
+              }
+              
+              tempDevices.push({
+                name,
+                url,
+                year: extractedYear,
+                persian_name: name
+              });
+            }
+            
+            // If we found devices with this pattern, use them
+            if (tempDevices.length > 0) {
+              devices = [...devices, ...tempDevices];
+              break; // Stop trying other patterns for this URL
+            }
           }
+          
+          // If we found devices, stop trying other URLs
+          if (devices.length > 0) {
+            break;
+          }
+          
+        } catch (urlError) {
+          logProgress(`Error with search URL ${searchUrl}: ${urlError.message}`, 'warn');
+          continue;
         }
-        
-        devices.push({
-          name,
-          url,
-          year,
-          persian_name: name
-        });
       }
       
-      logProgress(`Found ${devices.length} devices for brand ${brandName}`, 'success');
-      return devices;
+      // Remove duplicates based on name
+      const uniqueDevices = [];
+      const seenNames = new Set();
+      
+      for (const device of devices) {
+        if (!seenNames.has(device.name)) {
+          seenNames.add(device.name);
+          uniqueDevices.push(device);
+        }
+      }
+      
+      logProgress(`Found ${uniqueDevices.length} unique devices for brand ${brandName}`, 'success');
+      return uniqueDevices;
     } catch (error) {
       logProgress(`Error searching devices by brand: ${error.message}`, 'error');
       return [];
@@ -176,65 +262,76 @@ export class DirectApiService {
       // Extract specifications
       const specSections = {};
       
-      // Use regex to extract specification sections
-      const sectionRegex = /<th rowspan="\d+"[^>]*>([^<]+)<\/th>[\s\S]+?<td class="ttl">([^<]+)<\/td>[\s\S]+?<td class="nfo">([^<]+)<\/td>/g;
-      let sectionMatch;
+      // Try multiple approaches to extract specifications
+      const specPatterns = [
+        // Pattern 1: GSM Arena standard format with ttl and nfo classes
+        /<td class="ttl">([^<]+)<\/td>\s*<td class="nfo"[^>]*>([^<]+)<\/td>/g,
+        // Pattern 2: Alternative format with links
+        /<td class="ttl"><a[^>]*>([^<]+)<\/a><\/td>\s*<td class="nfo"[^>]*>([^<]+)<\/td>/g,
+        // Pattern 3: Format with nested links in nfo
+        /<td class="ttl">([^<]+)<\/td>\s*<td class="nfo"[^>]*><a[^>]*>([^<]+)<\/a><\/td>/g,
+        // Pattern 4: Simple table rows without classes
+        /<tr[^>]*>\s*<td[^>]*>([^<]+)<\/td>\s*<td[^>]*>([^<]+)<\/td>\s*<\/tr>/g
+      ];
       
-      while ((sectionMatch = sectionRegex.exec(html)) !== null) {
-        const sectionName = sectionMatch[1].trim();
-        const specName = sectionMatch[2].trim();
-        const specValue = sectionMatch[3].trim();
-        
-        if (!specSections[sectionName]) {
-          specSections[sectionName] = {};
+      for (const pattern of specPatterns) {
+        let match;
+        while ((match = pattern.exec(html)) !== null) {
+          const specName = match[1].trim();
+          const specValue = match[2].trim();
+          
+          if (specName && specValue && specName !== '&nbsp;' && specValue !== '&nbsp;') {
+            // Clean up the specification name and value
+            const cleanName = specName.replace(/&nbsp;/g, '').trim();
+            const cleanValue = specValue.replace(/&nbsp;/g, '').trim();
+            
+            if (cleanName && cleanValue) {
+              specSections[cleanName] = cleanValue;
+            }
+          }
         }
-        
-        specSections[sectionName][specName] = specValue;
       }
       
-      // Extract RAM, storage, and color options
+      // Extract RAM, storage, and color options from specifications
       const ramOptions = [];
       const storageOptions = [];
       const colorOptions = [];
       
-      // Look for RAM in the specifications
-      if (specSections.Memory && specSections.Memory.RAM) {
-        const ramText = specSections.Memory.RAM;
-        const ramMatches = ramText.match(/\b\d+GB\b/g);
-        
-        if (ramMatches) {
-          ramMatches.forEach(ram => {
-            if (!ramOptions.includes(ram)) {
-              ramOptions.push(ram);
+        // Look for RAM in the specifications
+        for (const [key, value] of Object.entries(specSections)) {
+          if (key.toLowerCase().includes('ram') || key.toLowerCase().includes('memory') || key.toLowerCase().includes('internal')) {
+            const ramMatches = value.match(/\b(\d+)\s*GB\s*RAM\b/gi);
+            if (ramMatches) {
+              ramMatches.forEach(ram => {
+                const ramValue = ram.replace(/\D/g, '');
+                if (ramValue && !ramOptions.includes(ramValue)) {
+                  ramOptions.push(ramValue);
+                }
+              });
             }
-          });
-        }
-      }
-      
-      // Look for storage in the specifications
-      if (specSections.Memory && specSections.Memory.Internal) {
-        const storageText = specSections.Memory.Internal;
-        const storageMatches = storageText.match(/\b\d+GB\b|\b\d+TB\b/g);
-        
-        if (storageMatches) {
-          storageMatches.forEach(storage => {
-            if (!storageOptions.includes(storage)) {
-              storageOptions.push(storage);
-            }
-          });
-        }
-      }
-      
-      // Look for colors in the specifications
-      if (specSections.Misc && specSections.Misc.Colors) {
-        const colorText = specSections.Misc.Colors;
-        const colors = colorText.split(',').map(color => color.trim());
-        
-        colors.forEach(color => {
-          if (!colorOptions.includes(color)) {
-            colorOptions.push(color);
           }
-        });
+        
+        // Look for storage
+        if (key.toLowerCase().includes('internal') || key.toLowerCase().includes('storage')) {
+          const storageMatches = value.match(/\b(\d+)\s*(GB|TB)\b/gi);
+          if (storageMatches) {
+            storageMatches.forEach(storage => {
+              if (!storageOptions.includes(storage)) {
+                storageOptions.push(storage);
+              }
+            });
+          }
+        }
+        
+        // Look for colors
+        if (key.toLowerCase().includes('color')) {
+          const colors = value.split(',').map(color => color.trim());
+          colors.forEach(color => {
+            if (color && !colorOptions.includes(color)) {
+              colorOptions.push(color);
+            }
+          });
+        }
       }
       
       return {
@@ -267,20 +364,72 @@ export class DirectApiService {
       logProgress(`Scraping brand: ${brand.name}`, 'info');
       
       // Get devices for the brand
-      const models = await this.searchDevicesByBrand(brand.name, {
+      const devices = await this.searchDevicesByBrand(brand.name, {
         minYear: options.minYear,
         excludeKeywords: CONFIG.EXCLUDE_KEYWORDS
       });
       
+      // Convert devices to models with detailed specifications
+      const models = [];
+      const modelsPerBrand = options.modelsPerBrand || devices.length;
+      const devicesToProcess = devices.slice(0, modelsPerBrand);
+      
+      for (const device of devicesToProcess) {
+        try {
+          logProgress(`  Getting details for: ${device.name}`, 'info');
+          
+          const deviceSpecs = await this.getDeviceSpecifications(device);
+          
+          models.push({
+            brand_name: brand.name,
+            model_name: device.name,
+            persian_name: device.persian_name || device.name,
+            series: device.name.split(' ')[0],
+            ram_options: deviceSpecs.ram_options || [6, 8],
+            storage_options: deviceSpecs.storage_options || [128, 256],
+            color_options: deviceSpecs.color_options.length > 0 ? 
+              deviceSpecs.color_options :
+              ['Black', 'White'],
+            specifications: deviceSpecs.specifications || {},
+            release_date: device.year ? `${device.year}-01-01` : '2023-01-01',
+            image_url: deviceSpecs.image_url,
+            is_active: true
+          });
+          
+          // Add delay between device processing
+          await this.delay(CONFIG.DELAYS.between_requests || 1000);
+        } catch (error) {
+          logProgress(`  Error processing device ${device.name}: ${error.message}`, 'error');
+          // Add fallback model data
+          models.push({
+            brand_name: brand.name,
+            model_name: device.name,
+            persian_name: device.persian_name || device.name,
+            series: device.name.split(' ')[0],
+            ram_options: [6, 8],
+            storage_options: [128, 256],
+            color_options: ['Black', 'White'],
+            specifications: {},
+            release_date: device.year ? `${device.year}-01-01` : '2023-01-01',
+            image_url: null,
+            is_active: true
+          });
+        }
+      }
+      
       return {
-        ...brand,
-        models,
-        is_active: true
+        name: brand.name,
+        persian_name: brand.persian_name || brand.name.charAt(0).toUpperCase() + brand.name.slice(1),
+        logo_url: brand.logo_url || `${this.baseUrl}/img/logo_${brand.name}.png`,
+        is_active: true,
+        models: models
       };
     } catch (error) {
       logProgress(`Error scraping brand ${brand.name}: ${error.message}`, 'error');
       return {
-        ...brand,
+        name: brand.name,
+        persian_name: brand.persian_name || brand.name.charAt(0).toUpperCase() + brand.name.slice(1),
+        logo_url: brand.logo_url || `${this.baseUrl}/img/logo_${brand.name}.png`,
         models: [],
         is_active: false,
         error: error.message
@@ -290,22 +439,129 @@ export class DirectApiService {
 
   /**
    * Scrape multiple brands
-   * @param {Array} brands - Array of brand objects
+   * @param {Array} brands - Array of brand names or brand objects
    * @param {Object} options - Scraping options
-   * @returns {Promise<Array>} - Array of brand data with models
+   * @returns {Promise<Object>} - Scraping result with brands and models
    */
   async scrapeBrands(brands, options = {}) {
-    const results = [];
-    
-    for (const brand of brands) {
-      const brandData = await this.scrapeBrand(brand, options);
-      results.push(brandData);
+    try {
+      logProgress(`Starting to scrape ${brands.length} brands`, 'info');
       
-      // Add delay between brand scraping
-      await this.delay(CONFIG.DELAYS.between_brands || 5000);
+      const results = [];
+      let totalModels = 0;
+      
+      for (const brand of brands) {
+        let brandObj;
+        
+        // Handle both string brand names and brand objects
+        if (typeof brand === 'string') {
+          brandObj = {
+            name: brand,
+            persian_name: brand.charAt(0).toUpperCase() + brand.slice(1),
+            url: `${this.baseUrl}/${brand}-phones-48.php`,
+            is_active: true
+          };
+        } else {
+          brandObj = brand;
+        }
+        
+        logProgress(`Processing brand: ${brandObj.name}`, 'info');
+        
+        const brandData = await this.scrapeBrand(brandObj, options);
+        results.push(brandData);
+        totalModels += brandData.models ? brandData.models.length : 0;
+        
+        // Add delay between brand scraping
+        await this.delay(CONFIG.DELAYS.between_brands || 3000);
+      }
+      
+      return {
+        brands: results,
+        scraped_at: new Date().toISOString(),
+        total_brands: results.length,
+        total_models: totalModels,
+        options: options
+      };
+    } catch (error) {
+      logProgress(`Error in scrapeBrands: ${error.message}`, 'error');
+      throw error;
     }
+  }
+
+  /**
+   * Get devices by brand name (alias for searchDevicesByBrand)
+   * @param {string} brandName - Brand name
+   * @returns {Promise<Array>} - List of devices for the brand
+   */
+  async getDevicesByBrand(brandName) {
+    return this.searchDevicesByBrand(brandName);
+  }
+
+  /**
+   * Get device specifications by device ID
+   * @param {string} deviceId - Device ID
+   * @returns {Promise<Object>} - Device specifications
+   */
+  async getDeviceSpecificationsById(deviceId) {
+    // This method expects a device ID, but we need to construct the device object
+    const device = {
+      name: `Device ${deviceId}`,
+      url: `${this.baseUrl}/device-${deviceId}.php`,
+      persian_name: `Device ${deviceId}`
+    };
     
-    return results;
+    return this.getDeviceSpecifications(device);
+  }
+
+  /**
+   * Find devices by keyword
+   * @param {string} keyword - Search keyword
+   * @returns {Promise<Array>} - List of matching devices
+   */
+  async findDevicesByKeyword(keyword) {
+    return this.searchDevicesByBrand(keyword);
+  }
+
+  /**
+   * Get available brands from GSM Arena
+   * @returns {Array} - Available brands
+   */
+  async getAvailableBrands() {
+    return this.getAllBrands();
+  }
+
+  /**
+   * Test scraping with single brand
+   * @param {string} brandName - Brand name to test
+   * @returns {Object} - Test result
+   */
+  async testScraping(brandName = 'apple') {
+    const options = {
+      modelsPerBrand: 3,
+      minYear: undefined // No year filtering for test
+    };
+
+    const result = await this.scrapeBrands([brandName], options);
+    
+    return {
+      brand: result.brands[0] || null,
+      scraped_at: result.scraped_at,
+      total_models: result.total_models,
+      test_mode: true
+    };
+  }
+
+  /**
+   * Get current scraping status
+   * @returns {Object} - Current status
+   */
+  async getStatus() {
+    return {
+      status: 'ready',
+      isRunning: false,
+      hasBrowser: false,
+      timestamp: new Date().toISOString()
+    };
   }
 }
 

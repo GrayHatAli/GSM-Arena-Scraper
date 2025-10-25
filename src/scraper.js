@@ -178,10 +178,7 @@ class GSMArenaScraper {
         
         // Extract colors
         const colorElements = document.querySelectorAll('.color-variant, .color-variant a, .color-variant span, .color-variant div');
-        const colors = Array.from(colorElements).map(el => ({
-          en: el.textContent.trim(),
-          fa: el.textContent.trim()
-        }));
+        const colors = Array.from(colorElements).map(el => el.textContent.trim());
         
         // Extract image
         const imageSelectors = [
@@ -216,8 +213,8 @@ class GSMArenaScraper {
         ram_options: ramStorage.ram_options,
         storage_options: ramStorage.storage_options,
         color_options: details.colors.length > 0 ? details.colors : [
-          { en: 'Black', fa: 'مشکی' },
-          { en: 'White', fa: 'سفید' }
+          'Black',
+          'White'
         ],
         image_url: details.image_url
       };
