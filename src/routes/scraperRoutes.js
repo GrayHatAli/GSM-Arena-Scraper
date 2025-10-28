@@ -1,6 +1,14 @@
 // Scraper Routes - API endpoints
 
 import { ScraperController } from '../controllers/ScraperController.js';
+import swaggerUi from 'swagger-ui-express';
+import YAML from 'yamljs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const swaggerDocument = YAML.load(path.join(__dirname, '../../swagger.yaml'));
 
 export class ScraperRoutes {
   constructor() {
@@ -35,7 +43,11 @@ export class ScraperRoutes {
       
       // Data endpoints
       'GET /data/latest': this.getLatestData.bind(this),
-      'POST /data/save': this.saveData.bind(this)
+      'POST /data/save': this.saveData.bind(this),
+      
+      // Documentation endpoints
+      'GET /docs': this.getSwaggerUI.bind(this),
+      'GET /swagger.json': this.getSwaggerJSON.bind(this)
     };
   }
 
@@ -304,6 +316,44 @@ export class ScraperRoutes {
       res.status(500).json({
         success: false,
         message: 'Failed to search devices',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Get Swagger UI
+   * @param {Object} req - Request object
+   * @param {Object} res - Response object
+   */
+  async getSwaggerUI(req, res) {
+    try {
+      const swaggerUiHtml = swaggerUi.generateHTML(swaggerDocument, {
+        customCss: '.swagger-ui .topbar { display: none }',
+        customSiteTitle: 'GSM Arena Scraper API Documentation'
+      });
+      res.send(swaggerUiHtml);
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: 'Failed to load Swagger UI',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Get Swagger JSON
+   * @param {Object} req - Request object
+   * @param {Object} res - Response object
+   */
+  async getSwaggerJSON(req, res) {
+    try {
+      res.json(swaggerDocument);
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: 'Failed to load Swagger JSON',
         error: error.message
       });
     }

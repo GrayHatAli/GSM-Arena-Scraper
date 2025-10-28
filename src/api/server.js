@@ -44,8 +44,14 @@ export class ScraperAPI {
 
     // Brand endpoints
     this.app.get('/brands', routeDefinitions['GET /brands']);
+    this.app.get('/brands/all', routeDefinitions['GET /brands/all']);
     this.app.post('/brands/scrape', routeDefinitions['POST /brands/scrape']);
     this.app.post('/brands/:brandName/scrape', routeDefinitions['POST /brands/:brandName/scrape']);
+    this.app.get('/brands/:brandName/devices', routeDefinitions['GET /brands/:brandName/devices']);
+
+    // Device endpoints
+    this.app.get('/devices/:deviceId/specifications', routeDefinitions['GET /devices/:deviceId/specifications']);
+    this.app.get('/devices/search', routeDefinitions['GET /devices/search']);
 
     // Scraping endpoints
     this.app.post('/scrape/test', routeDefinitions['POST /scrape/test']);
@@ -53,6 +59,10 @@ export class ScraperAPI {
     // Data endpoints
     this.app.get('/data/latest', routeDefinitions['GET /data/latest']);
     this.app.post('/data/save', routeDefinitions['POST /data/save']);
+
+    // Documentation endpoints
+    this.app.get('/docs', routeDefinitions['GET /docs']);
+    this.app.get('/swagger.json', routeDefinitions['GET /swagger.json']);
 
     // 404 handler
     this.app.use('*', (req, res) => {
@@ -89,6 +99,9 @@ export class ScraperAPI {
       console.log(`   POST /scrape/test - Test scraping`);
       console.log(`   GET  /data/latest - Get latest data`);
       console.log(`   POST /data/save - Save data`);
+      console.log(`📖 Swagger Documentation:`);
+      console.log(`   GET  /docs - Interactive API documentation`);
+      console.log(`   GET  /swagger.json - OpenAPI specification`);
     });
   }
 
