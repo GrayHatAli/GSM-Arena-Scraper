@@ -203,6 +203,37 @@ export class ScraperService {
                 }
               }
               
+              // Filter out non-phone devices (tablets, watches, accessories, etc.)
+              const nameLower = name.toLowerCase();
+              const nonPhoneKeywords = [
+                'ipad',
+                'watch',
+                'airpods',
+                'mac',
+                'macbook',
+                'imac',
+                'mac mini',
+                'mac pro',
+                'apple tv',
+                'homepod',
+                'airtag',
+                'tablet',
+                'smartwatch',
+                'smart watch',
+                'earbuds',
+                'headphones',
+                'speaker',
+                'accessory',
+                'charger',
+                'case',
+                'cover'
+              ];
+              
+              const isNonPhone = nonPhoneKeywords.some(keyword => nameLower.includes(keyword));
+              if (isNonPhone) {
+                continue;
+              }
+              
               tempDevices.push({
                 name,
                 url,
