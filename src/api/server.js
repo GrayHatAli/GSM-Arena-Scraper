@@ -85,14 +85,19 @@ export class ScraperAPI {
     // Swagger JSON endpoint (must be before Swagger UI middleware)
     this.app.get('/swagger.json', routeDefinitions['GET /swagger.json']);
 
-    // Swagger UI setup with middleware
+    // Swagger UI setup with middleware - use CDN for assets (works better on Vercel)
     const swaggerUiOptions = {
       customCss: '.swagger-ui .topbar { display: none }',
-      customSiteTitle: 'GSM Arena Scraper API Documentation'
+      customSiteTitle: 'GSM Arena Scraper API Documentation',
+      customJs: [
+        'https://unpkg.com/swagger-ui-dist@5.9.0/swagger-ui-bundle.js',
+        'https://unpkg.com/swagger-ui-dist@5.9.0/swagger-ui-standalone-preset.js'
+      ],
+      customCssUrl: 'https://unpkg.com/swagger-ui-dist@5.9.0/swagger-ui.css'
     };
 
-    // Swagger UI serve middleware - handles asset requests (CSS, JS files)
-    // This middleware only serves Swagger UI assets and passes through other requests
+    // Swagger UI serve middleware - handles asset requests
+    // This will only serve Swagger UI assets and pass through other requests
     this.app.use(swaggerUi.serve);
 
     // Root -> Swagger docs HTML (only for GET /)
