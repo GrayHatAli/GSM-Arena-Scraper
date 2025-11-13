@@ -5,13 +5,23 @@ import swaggerUi from 'swagger-ui-express';
 import { parse } from 'yaml';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const swaggerDocument = parse(
-  readFileSync(path.join(__dirname, '../../swagger.yaml'), 'utf8')
-);
+const swaggerPathCandidates = [
+  path.join(__dirname, '../../swagger.yaml'),
+  path.resolve(process.cwd(), 'swagger.yaml'),
+  path.resolve(process.cwd(), 'src/swagger.yaml')
+];
+
+const swaggerPath = swaggerPathCandidates.find((candidate) => existsSync(candidate));
+
+if (!swaggerPath) {
+  throw new Error('Unable to locate swagger.yaml file. Checked paths: ' + swaggerPathCandidates.join(', '));
+}
+
+const swaggerDocument = parse(readFileSync(swaggerPath, 'utf8'));
 
 export class ScraperRoutes {
   constructor() {
