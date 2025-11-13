@@ -1,19 +1,14 @@
 {
   "version": 2,
-  "outputDirectory": ".",
   "functions": {
     "api/index.js": {
       "includeFiles": "swagger.yaml"
     }
   },
-  "routes": [
+  "rewrites": [
     {
-      "src": "/",
-      "dest": "/api/index.js"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "/api/index.js"
+      "source": "/(.*)",
+      "destination": "/api/index.js"
     }
   ]
 }
