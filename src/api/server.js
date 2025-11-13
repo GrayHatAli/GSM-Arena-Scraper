@@ -2,8 +2,54 @@
 
 import express from 'express';
 import cors from 'cors';
+import swaggerUi from 'swagger-ui-express';
 import { ScraperRoutes } from '../routes/scraperRoutes.js';
 import { CONFIG } from '../config/config.js';
+import { parse } from 'yaml';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { readFileSync, existsSync } from 'fs';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const swaggerPathCandidates = [
+  path.join(__dirname, '../../swagger.yaml'),
+  path.resolve(process.cwd(), 'swagger.yaml'),
+  path.resolve(process.cwd(), 'src/swagger.yaml')
+];
+
+const swaggerPath = swaggerPathCandidates.find((candidate) => existsSync(candidate));
+
+let swaggerDocument;
+
+if (swaggerPath) {
+  try {
+    swaggerDocument = parse(readFileSync(swaggerPath, 'utf8'));
+  } catch (error) {
+    console.error('Failed to parse swagger.yaml. Using fallback document. Error:', error.message);
+    swaggerDocument = null;
+  }
+} else {
+  swaggerDocument = null;
+}
+
+if (!swaggerDocument) {
+  swaggerDocument = {
+    openapi: '3.0.0',
+    info: {
+      title: 'GSM Arena Scraper API',
+      description:
+        'swagger.yaml is missing; using minimal fallback schema. Ensure swagger.yaml is deployed for full documentation.',
+      version: '1.0.0'
+    },
+    paths: {}
+  };
+  console.warn(
+    'swagger.yaml not found. Checked paths:',
+    swaggerPathCandidates,
+    'Using fallback Swagger document.'
+  );
+}
 
 export class ScraperAPI {
   constructor() {
@@ -36,8 +82,20 @@ export class ScraperAPI {
   setupRoutes() {
     const routeDefinitions = this.routes.getRoutes();
 
-    // Root -> Swagger docs (serve directly)
-    this.app.get('/', routeDefinitions['GET /docs']);
+    // Swagger JSON endpoint (must be before Swagger UI middleware)
+    this.app.get('/swagger.json', routeDefinitions['GET /swagger.json']);
+
+    // Swagger UI setup with middleware
+    const swaggerUiOptions = {
+      customCss: '.swagger-ui .topbar { display: none }',
+      customSiteTitle: 'GSM Arena Scraper API Documentation'
+    };
+
+    // Root -> Swagger docs (swaggerUi.setup handles both HTML and assets)
+    this.app.get('/', swaggerUi.serve, swaggerUi.setup(swaggerDocument, swaggerUiOptions));
+
+    // /docs -> Swagger docs
+    this.app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument, swaggerUiOptions));
 
     // Health check
     this.app.get('/health', routeDefinitions['GET /health']);
@@ -62,10 +120,6 @@ export class ScraperAPI {
     // Data endpoints
     this.app.get('/data/latest', routeDefinitions['GET /data/latest']);
     this.app.post('/data/save', routeDefinitions['POST /data/save']);
-
-    // Documentation endpoints
-    this.app.get('/docs', routeDefinitions['GET /docs']);
-    this.app.get('/swagger.json', routeDefinitions['GET /swagger.json']);
 
     // 404 handler
     this.app.use('*', (req, res) => {
