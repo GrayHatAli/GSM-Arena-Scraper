@@ -11,7 +11,7 @@
     "dev": "nodemon src/index.js server",
     "cli": "node src/index.js cli",
     "install-deps": "npm install",
-    "build": "echo 'No build step required'",
+    "build": "mkdir -p public && echo 'Build completed'",
     "docker:build": "docker build -t gsm-arena-scraper .",
     "docker:run": "docker run -p 3002:3002 gsm-arena-scraper"
   },
