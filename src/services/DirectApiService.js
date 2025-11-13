@@ -83,10 +83,19 @@ export class ScraperService {
             continue;
           }
           
-          // Skip invalid entries
-          if (!href || !name || name.length < 2) {
+          // Skip invalid entries - must have href
+          if (!href || typeof href !== 'string') {
             continue;
           }
+          
+          // CRITICAL: Only accept brand URLs that match the pattern *-phones-*.php
+          const brandUrlMatch = href.match(/([a-z0-9]+)-phones-\d+\.php/i);
+          if (!brandUrlMatch || !brandUrlMatch[1]) {
+            continue; // Skip if not a valid brand URL
+          }
+          
+          // Extract brand name from URL (most reliable source)
+          const brandNameFromUrl = brandUrlMatch[1].toLowerCase();
           
           // Skip non-brand links
           if (href.includes('glossary') || 
@@ -98,27 +107,47 @@ export class ScraperService {
               href.includes('coverage') ||
               href.includes('search') ||
               href.includes('phone-finder') ||
-              href.includes('network-bands')) {
+              href.includes('network-bands') ||
+              href === '/' ||
+              href === '') {
             continue;
           }
           
-          // Clean up the name (remove extra whitespace, numbers at the end, etc.)
-          name = name.replace(/\s+/g, ' ').trim();
-          name = name.replace(/\d+.*$/, '').trim(); // Remove trailing numbers
-          
-          // If name is still empty or too short, try to extract from URL
-          if (!name || name.length < 2) {
-            // Extract brand name from URL pattern like "apple-phones-48.php"
-            const urlMatch = href.match(/([a-z0-9]+)-phones-\d+\.php/i);
-            if (urlMatch && urlMatch[1]) {
-              name = urlMatch[1];
-            } else {
-              continue; // Skip if we can't determine the name
-            }
+          // Filter out invalid brand names (JavaScript keywords, etc.)
+          const invalidNames = ['object', 'function', 'undefined', 'null', 'true', 'false', 'this', 'var', 'let', 'const'];
+          if (invalidNames.includes(name.toLowerCase())) {
+            name = ''; // Force use of URL-based name
           }
           
-          const url = href.startsWith('http') ? href : this.baseUrl + '/' + href;
-          const fullLogoUrl = logoUrl ? (logoUrl.startsWith('http') ? logoUrl : this.baseUrl + '/' + logoUrl) : '';
+          // Clean up the name (remove extra whitespace, numbers at the end, etc.)
+          if (name) {
+            name = name.replace(/\s+/g, ' ').trim();
+            name = name.replace(/\d+.*$/, '').trim(); // Remove trailing numbers
+            // Remove HTML entities and tags
+            name = name.replace(/&[a-z]+;/gi, '').replace(/<[^>]+>/g, '').trim();
+          }
+          
+          // Use brand name from URL if name is invalid or empty
+          if (!name || name.length < 2 || invalidNames.includes(name.toLowerCase())) {
+            name = brandNameFromUrl;
+          }
+          
+          // Final validation - name must be at least 2 characters and not an invalid keyword
+          if (!name || name.length < 2 || invalidNames.includes(name.toLowerCase())) {
+            continue;
+          }
+          
+          // Ensure URL is properly formatted
+          let url = href.startsWith('http') ? href : this.baseUrl + '/' + href.replace(/^\/+/, '');
+          // Fix double slashes (but preserve http://)
+          url = url.replace(/([^:]\/)\/+/g, '$1');
+          if (!url || url === this.baseUrl + '/' || url.endsWith('//')) {
+            continue; // Skip malformed URLs
+          }
+          
+          const fullLogoUrl = logoUrl && typeof logoUrl === 'string' 
+            ? (logoUrl.startsWith('http') ? logoUrl : this.baseUrl + '/' + logoUrl.replace(/^\/+/, ''))
+            : '';
           
           brands.push({
             name: name.toLowerCase(),
@@ -145,29 +174,45 @@ export class ScraperService {
         
         while ((urlMatch = urlPattern.exec(html)) !== null) {
           const href = urlMatch[1];
-          const brandMatch = href.match(/([a-z0-9]+)-phones-\d+\.php/i);
           
-          if (brandMatch && brandMatch[1] && !seenUrls.has(href)) {
-            const brandName = brandMatch[1].toLowerCase();
-            const url = href.startsWith('http') ? href : this.baseUrl + '/' + href;
-            
-            // Try to find logo URL near this link
-            const logoPattern = new RegExp(`href="${href.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"[^>]*>[\\s\\S]{0,500}<img[^>]*src="([^"]+)"`, 'i');
-            const logoMatch = html.match(logoPattern);
-            const logoUrl = logoMatch && logoMatch[1] 
-              ? (logoMatch[1].startsWith('http') ? logoMatch[1] : this.baseUrl + '/' + logoMatch[1])
-              : '';
-            
-            brands.push({
-              name: brandName,
-              url,
-              logo_url: logoUrl,
-              persian_name: brandName,
-              is_active: true
-            });
-            
-            seenUrls.add(href);
+          // Validate it's a proper brand URL
+          const brandMatch = href.match(/([a-z0-9]+)-phones-\d+\.php/i);
+          if (!brandMatch || !brandMatch[1] || seenUrls.has(href)) {
+            continue;
           }
+          
+          const brandName = brandMatch[1].toLowerCase();
+          
+          // Skip if brand name is invalid
+          const invalidNames = ['object', 'function', 'undefined', 'null', 'true', 'false', 'this', 'var', 'let', 'const'];
+          if (invalidNames.includes(brandName) || brandName.length < 2) {
+            continue;
+          }
+          
+          // Ensure URL is properly formatted
+          let url = href.startsWith('http') ? href : this.baseUrl + '/' + href.replace(/^\/+/, '');
+          // Fix double slashes (but preserve http://)
+          url = url.replace(/([^:]\/)\/+/g, '$1');
+          if (!url || url === this.baseUrl + '/' || url.endsWith('//')) {
+            continue; // Skip malformed URLs
+          }
+          
+          // Try to find logo URL near this link
+          const logoPattern = new RegExp(`href="${href.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"[^>]*>[\\s\\S]{0,500}<img[^>]*src="([^"]+)"`, 'i');
+          const logoMatch = html.match(logoPattern);
+          const logoUrl = logoMatch && logoMatch[1] && typeof logoMatch[1] === 'string'
+            ? (logoMatch[1].startsWith('http') ? logoMatch[1] : this.baseUrl + '/' + logoMatch[1].replace(/^\/+/, ''))
+            : '';
+          
+          brands.push({
+            name: brandName,
+            url,
+            logo_url: logoUrl,
+            persian_name: brandName,
+            is_active: true
+          });
+          
+          seenUrls.add(href);
         }
       }
       
