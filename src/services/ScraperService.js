@@ -65,28 +65,143 @@ export class ScraperService {
       // Extract brands from HTML response
       const html = response.data;
       
-      // Use regex to extract brand data
-      const brandRegex = /<a href="([^"]+)"[^>]*><img src="([^"]+)"[^>]*><br>([^<]+)<\/a>/g;
-      const brands = [];
-      let match;
+      // Try multiple regex patterns to extract brand data (GSM Arena HTML structure may vary)
+      const brandPatterns = [
+        // Pattern 1: Standard format with img and br
+        /<a href="([^"]+)"[^>]*><img[^>]*src="([^"]+)"[^>]*><br>([^<]+)<\/a>/g,
+        // Pattern 2: Format with img and text in span or strong
+        /<a href="([^"]+)"[^>]*><img[^>]*src="([^"]+)"[^>]*><\/img>[\s\S]*?<span[^>]*>([^<]+)<\/span>/g,
+        // Pattern 3: Format with img and text after
+        /<a href="([^"]+)"[^>]*><img[^>]*src="([^"]+)"[^>]*>[\s\S]*?([A-Za-z0-9\s&]+)<\/a>/g,
+        // Pattern 4: More flexible - any link with img and text
+        /<a[^>]*href="([^"]+)"[^>]*>[\s\S]*?<img[^>]*src="([^"]+)"[^>]*>[\s\S]*?([A-Za-z0-9\s&]+)[\s\S]*?<\/a>/g,
+        // Pattern 5: Links in makers section
+        /<a[^>]*href="([^"]+)"[^>]*class="[^"]*makers[^"]*"[^>]*>[\s\S]*?<img[^>]*src="([^"]+)"[^>]*>[\s\S]*?([A-Za-z0-9\s&]+)[\s\S]*?<\/a>/g,
+        // Pattern 6: Links in st-text class (used by GSM Arena)
+        /<div[^>]*class="[^"]*st-text[^"]*"[^>]*>[\s\S]*?<a[^>]*href="([^"]+)"[^>]*>[\s\S]*?<img[^>]*src="([^"]+)"[^>]*>[\s\S]*?([A-Za-z0-9\s&]+)[\s\S]*?<\/a>/g,
+        // Pattern 7: Simple link with brand URL pattern (extract brand from URL)
+        /<a[^>]*href="([^"]*-phones-\d+\.php)"[^>]*>[\s\S]*?<img[^>]*src="([^"]+)"[^>]*>[\s\S]*?([A-Za-z0-9\s&]+)[\s\S]*?<\/a>/g
+      ];
       
-      while ((match = brandRegex.exec(html)) !== null) {
-        const url = this.baseUrl + '/' + match[1];
-        const logoUrl = this.baseUrl + '/' + match[2];
-        const name = match[3].trim();
+      const brands = [];
+      const seenUrls = new Set();
+      
+      for (const pattern of brandPatterns) {
+        let match;
+        pattern.lastIndex = 0; // Reset regex
         
-        brands.push({
-          name,
-          url,
-          logo_url: logoUrl,
-          is_active: true
-        });
+        while ((match = pattern.exec(html)) !== null) {
+          const href = match[1];
+          const logoUrl = match[2];
+          let name = match[3] ? match[3].trim() : '';
+          
+          // Skip if we've already seen this URL
+          if (seenUrls.has(href)) {
+            continue;
+          }
+          
+          // Skip invalid entries
+          if (!href || !name || name.length < 2) {
+            continue;
+          }
+          
+          // Skip non-brand links
+          if (href.includes('glossary') || 
+              href.includes('news') || 
+              href.includes('reviews') ||
+              href.includes('videos') ||
+              href.includes('deals') ||
+              href.includes('contact') ||
+              href.includes('coverage') ||
+              href.includes('search') ||
+              href.includes('phone-finder') ||
+              href.includes('network-bands')) {
+            continue;
+          }
+          
+          // Clean up the name (remove extra whitespace, numbers at the end, etc.)
+          name = name.replace(/\s+/g, ' ').trim();
+          name = name.replace(/\d+.*$/, '').trim(); // Remove trailing numbers
+          
+          // If name is still empty or too short, try to extract from URL
+          if (!name || name.length < 2) {
+            // Extract brand name from URL pattern like "apple-phones-48.php"
+            const urlMatch = href.match(/([a-z0-9]+)-phones-\d+\.php/i);
+            if (urlMatch && urlMatch[1]) {
+              name = urlMatch[1];
+            } else {
+              continue; // Skip if we can't determine the name
+            }
+          }
+          
+          const url = href.startsWith('http') ? href : this.baseUrl + '/' + href;
+          const fullLogoUrl = logoUrl ? (logoUrl.startsWith('http') ? logoUrl : this.baseUrl + '/' + logoUrl) : '';
+          
+          brands.push({
+            name: name.toLowerCase(),
+            url,
+            logo_url: fullLogoUrl,
+            is_active: true
+          });
+          
+          seenUrls.add(href);
+        }
+        
+        // If we found brands with this pattern, stop trying others
+        if (brands.length > 0) {
+          break;
+        }
       }
       
-      logProgress(`Found ${brands.length} brands`, 'success');
-      return brands;
+      // If no brands found with patterns, try extracting from URLs directly
+      if (brands.length === 0) {
+        logProgress('No brands found with patterns, trying URL-based extraction...', 'info');
+        const urlPattern = /href="([^"]*-phones-\d+\.php)"/g;
+        let urlMatch;
+        
+        while ((urlMatch = urlPattern.exec(html)) !== null) {
+          const href = urlMatch[1];
+          const brandMatch = href.match(/([a-z0-9]+)-phones-\d+\.php/i);
+          
+          if (brandMatch && brandMatch[1] && !seenUrls.has(href)) {
+            const brandName = brandMatch[1].toLowerCase();
+            const url = href.startsWith('http') ? href : this.baseUrl + '/' + href;
+            
+            // Try to find logo URL near this link
+            const logoPattern = new RegExp(`href="${href.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"[^>]*>[\\s\\S]{0,500}<img[^>]*src="([^"]+)"`, 'i');
+            const logoMatch = html.match(logoPattern);
+            const logoUrl = logoMatch && logoMatch[1] 
+              ? (logoMatch[1].startsWith('http') ? logoMatch[1] : this.baseUrl + '/' + logoMatch[1])
+              : '';
+            
+            brands.push({
+              name: brandName,
+              url,
+              logo_url: logoUrl,
+              is_active: true
+            });
+            
+            seenUrls.add(href);
+          }
+        }
+      }
+      
+      // Remove duplicates based on URL
+      const uniqueBrands = [];
+      const seenBrandUrls = new Set();
+      
+      for (const brand of brands) {
+        if (!seenBrandUrls.has(brand.url)) {
+          seenBrandUrls.add(brand.url);
+          uniqueBrands.push(brand);
+        }
+      }
+      
+      logProgress(`Found ${uniqueBrands.length} brands`, 'success');
+      return uniqueBrands;
     } catch (error) {
       logProgress(`Error getting available brands: ${error.message}`, 'error');
+      console.error('Full error:', error);
       return [];
     }
   }
