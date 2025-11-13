@@ -91,8 +91,12 @@ export class ScraperAPI {
       customSiteTitle: 'GSM Arena Scraper API Documentation'
     };
 
-    // Root -> Swagger docs (swaggerUi.setup handles both HTML and assets)
-    this.app.get('/', swaggerUi.serve, swaggerUi.setup(swaggerDocument, swaggerUiOptions));
+    // Swagger UI serve middleware - handles asset requests (CSS, JS files)
+    // This middleware only serves Swagger UI assets and passes through other requests
+    this.app.use(swaggerUi.serve);
+
+    // Root -> Swagger docs HTML (only for GET /)
+    this.app.get('/', swaggerUi.setup(swaggerDocument, swaggerUiOptions));
 
     // /docs -> Swagger docs
     this.app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument, swaggerUiOptions));
