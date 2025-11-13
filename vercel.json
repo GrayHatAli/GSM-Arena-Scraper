@@ -6,6 +6,11 @@
       "use": "@vercel/node"
     }
   ],
+  "functions": {
+    "api/index.js": {
+      "includeFiles": "swagger.yaml"
+    }
+  },
   "routes": [
     {
       "src": "/(.*)",

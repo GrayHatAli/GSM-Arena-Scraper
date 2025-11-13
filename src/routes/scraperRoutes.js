@@ -20,8 +20,17 @@ const swaggerPath = swaggerPathCandidates.find((candidate) => existsSync(candida
 let swaggerDocument;
 
 if (swaggerPath) {
-  swaggerDocument = parse(readFileSync(swaggerPath, 'utf8'));
+  try {
+    swaggerDocument = parse(readFileSync(swaggerPath, 'utf8'));
+  } catch (error) {
+    console.error('Failed to parse swagger.yaml. Using fallback document. Error:', error.message);
+    swaggerDocument = null;
+  }
 } else {
+  swaggerDocument = null;
+}
+
+if (!swaggerDocument) {
   swaggerDocument = {
     openapi: '3.0.0',
     info: {
