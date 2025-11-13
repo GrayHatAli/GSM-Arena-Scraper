@@ -17,11 +17,27 @@ const swaggerPathCandidates = [
 
 const swaggerPath = swaggerPathCandidates.find((candidate) => existsSync(candidate));
 
-if (!swaggerPath) {
-  throw new Error('Unable to locate swagger.yaml file. Checked paths: ' + swaggerPathCandidates.join(', '));
-}
+let swaggerDocument;
 
-const swaggerDocument = parse(readFileSync(swaggerPath, 'utf8'));
+if (swaggerPath) {
+  swaggerDocument = parse(readFileSync(swaggerPath, 'utf8'));
+} else {
+  swaggerDocument = {
+    openapi: '3.0.0',
+    info: {
+      title: 'GSM Arena Scraper API',
+      description:
+        'swagger.yaml is missing; using minimal fallback schema. Ensure swagger.yaml is deployed for full documentation.',
+      version: '1.0.0'
+    },
+    paths: {}
+  };
+  console.warn(
+    'swagger.yaml not found. Checked paths:',
+    swaggerPathCandidates,
+    'Using fallback Swagger document.'
+  );
+}
 
 export class ScraperRoutes {
   constructor() {
