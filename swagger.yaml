@@ -6,7 +6,7 @@ info:
     This API provides endpoints to scrape brands, models, and detailed specifications
     of mobile devices including RAM, storage, colors, and technical specifications.
   version: 1.0.0
-  contact:
+  contact: GrayHatAli@gmail.com
     name: GSM Arena Scraper API
     url: https://github.com/your-repo/gsm-arena-scraper
   license:
