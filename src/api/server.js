@@ -36,10 +36,8 @@ export class ScraperAPI {
   setupRoutes() {
     const routeDefinitions = this.routes.getRoutes();
 
-    // Root -> Swagger docs
-    this.app.get('/', (req, res) => {
-      res.redirect('/docs');
-    });
+    // Root -> Swagger docs (serve directly)
+    this.app.get('/', routeDefinitions['GET /docs']);
 
     // Health check
     this.app.get('/health', routeDefinitions['GET /health']);
