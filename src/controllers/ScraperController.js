@@ -91,7 +91,10 @@ export class ScraperController {
   async getAvailableBrands() {
     try {
       const brands = await this.scraperService.getAvailableBrands();
-      return ResponseHelper.success('Available brands retrieved successfully', brands);
+      return ResponseHelper.success('Available brands retrieved successfully', {
+        brands,
+        total_brands: brands.length
+      });
     } catch (error) {
       return ResponseHelper.error('Failed to get available brands', error.message);
     }

@@ -67,89 +67,82 @@ export class ScraperService {
       
       const brands = [];
       const brandDataMap = new Map(); // Store href -> {name, url} mapping for deduplication
+      const brandNameMap = new Map(); // Store href -> extracted name from HTML
       
-      // Pattern 1: Extract from table structure with brand name
+      // Step 1: Extract brand names from table structure (if available)
       // Matches: <td><a href="brand-phones-N.php">BrandName<br><span>N devices</span></a></td>
-      const tablePatternWithName = /<td><a[^>]*href="([^"]*-phones-\d+\.php)"[^>]*>([^<]+?)(?:<br|<\/a>)/gi;
-      let tableMatch;
+        // Also matches: <td><a href=brand-phones-N.php>BrandName<br><span>N devices</span></a></td>
+      const tablePatterns = [
+        /<td><a[^>]*href="([^"]*-phones-\d+\.php)"[^>]*>([^<\n\r]+?)(?:<br|<span|<\/a>)/gi,  // With quotes
+        /<td><a[^>]*href=([a-z0-9_&]+-phones-\d+\.php)[^>]*>([^<\n\r]+?)(?:<br|<span|<\/a>)/gi  // Without quotes (allow & and _)
+      ];
       
-      while ((tableMatch = tablePatternWithName.exec(html)) !== null) {
-        const href = tableMatch[1];
-        let name = tableMatch[2] ? tableMatch[2].trim() : '';
+      for (const tablePatternWithName of tablePatterns) {
+        let tableMatch;
+        tablePatternWithName.lastIndex = 0; // Reset regex
+        while ((tableMatch = tablePatternWithName.exec(html)) !== null) {
+          const href = tableMatch[1];
+          let name = tableMatch[2] ? tableMatch[2].trim() : '';
         
-        // Validate URL pattern
-        const brandUrlMatch = href.match(/([a-z0-9]+)-phones-\d+\.php/i);
+        // Validate URL pattern (allow &, _, and - in brand names)
+        const brandUrlMatch = href.match(/([a-z0-9_&]+)-phones-\d+\.php/i);
         if (!brandUrlMatch || !brandUrlMatch[1]) {
           continue;
         }
-        
-        // Extract brand name from URL as fallback
-        const brandNameFromUrl = brandUrlMatch[1].toLowerCase();
         
         // Clean up the name
         if (name) {
           name = name.replace(/\s+/g, ' ').trim();
           name = name.replace(/<[^>]+>/g, '').trim(); // Remove any HTML tags
           name = name.replace(/&[a-z]+;/gi, '').trim(); // Remove HTML entities
-        }
-        
-        // Use URL-based name if extracted name is invalid
-        if (!name || name.length < 2) {
-          name = brandNameFromUrl;
-        } else {
-          // Use the extracted name but normalize it
           name = name.toLowerCase();
         }
         
-        // Skip invalid names
-        const invalidNames = ['object', 'function', 'undefined', 'null', 'true', 'false', 'this', 'var', 'let', 'const'];
-        if (invalidNames.includes(name) || name.length < 2) {
-          continue;
+        // Store name if valid
+        if (name && name.length >= 2) {
+          const invalidNames = ['object', 'function', 'undefined', 'null', 'true', 'false', 'this', 'var', 'let', 'const'];
+          if (!invalidNames.includes(name)) {
+            brandNameMap.set(href, name);
+          }
         }
-        
-        // Format URL
-        let url = href.startsWith('http') ? href : this.baseUrl + '/' + href.replace(/^\/+/, '');
-        url = url.replace(/([^:]\/)\/+/g, '$1'); // Fix double slashes
-        
-        if (!url || url === this.baseUrl + '/' || url.endsWith('//')) {
-          continue;
-        }
-        
-        // Store in map (will be deduplicated later)
-        if (!brandDataMap.has(href)) {
-          brandDataMap.set(href, {
-            name: name.toLowerCase(),
-            url,
-            logo_url: '',
-            is_active: true
-          });
         }
       }
       
-      // Pattern 2: Extract ALL brand URLs from the page (comprehensive fallback)
-      // This ensures we get all brands even if table pattern missed some
-      const urlPattern = /href="([^"]*-phones-\d+\.php)"/gi;
-      let urlMatch;
+      // Step 2: Extract ALL brand URLs from the page (comprehensive extraction)
+      // This is the primary method to ensure we get all 125 brands
+      // Match both href="..." and href=... (with or without quotes)
+      // Brand names can contain letters, numbers, &, _, and -
+      const urlPatterns = [
+        /href="([^"]*-phones-\d+\.php)"/gi,  // With quotes
+        /href=([a-z0-9_&]+-phones-\d+\.php)(?:\s|>)/gi  // Without quotes (allow & and _)
+      ];
+      const allUrls = new Set();
       
-      while ((urlMatch = urlPattern.exec(html)) !== null) {
-        const href = urlMatch[1];
-        
-        // Skip if already in map
-        if (brandDataMap.has(href)) {
-          continue;
+      // First pass: collect all unique URLs from both patterns
+      for (const pattern of urlPatterns) {
+        let urlMatch;
+        pattern.lastIndex = 0; // Reset regex
+        while ((urlMatch = pattern.exec(html)) !== null) {
+          const href = urlMatch[1];
+          allUrls.add(href);
         }
-        
-        // Validate URL pattern
-        const brandMatch = href.match(/([a-z0-9]+)-phones-\d+\.php/i);
+      }
+      
+      // Second pass: process all URLs
+      for (const href of allUrls) {
+        // Validate URL pattern (allow &, _, and - in brand names)
+        const brandMatch = href.match(/([a-z0-9_&]+)-phones-\d+\.php/i);
         if (!brandMatch || !brandMatch[1]) {
           continue;
         }
         
-        const brandName = brandMatch[1].toLowerCase();
+        // Clean brand name: replace & with 'and', _ with '-', normalize
+        let brandNameFromUrl = brandMatch[1].toLowerCase();
+        brandNameFromUrl = brandNameFromUrl.replace(/&/g, 'and').replace(/_/g, '-');
         
         // Skip invalid names
         const invalidNames = ['object', 'function', 'undefined', 'null', 'true', 'false', 'this', 'var', 'let', 'const'];
-        if (invalidNames.includes(brandName) || brandName.length < 2) {
+        if (invalidNames.includes(brandNameFromUrl) || brandNameFromUrl.length < 2) {
           continue;
         }
         
@@ -177,31 +170,32 @@ export class ScraperService {
           continue;
         }
         
-        // Add to map
+        // Use extracted name from HTML if available, otherwise use URL-based name
+        const finalName = brandNameMap.get(href) || brandNameFromUrl;
+        
+        // Add to map (deduplication by href)
         brandDataMap.set(href, {
-          name: brandName,
+          name: finalName,
           url,
           logo_url: '',
           is_active: true
         });
       }
       
-      // Convert map to array
+      // Convert map to array (already deduplicated by Map)
       brands.push(...Array.from(brandDataMap.values()));
       
-      // Remove duplicates based on URL
-      const uniqueBrands = [];
-      const seenBrandUrls = new Set();
+      // Sort brands alphabetically by name (A to Z)
+      brands.sort((a, b) => {
+        const nameA = a.name.toLowerCase();
+        const nameB = b.name.toLowerCase();
+        if (nameA < nameB) return -1;
+        if (nameA > nameB) return 1;
+        return 0;
+      });
       
-      for (const brand of brands) {
-        if (!seenBrandUrls.has(brand.url)) {
-          seenBrandUrls.add(brand.url);
-          uniqueBrands.push(brand);
-        }
-      }
-      
-      logProgress(`Found ${uniqueBrands.length} brands`, 'success');
-      return uniqueBrands;
+      logProgress(`Found ${brands.length} brands`, 'success');
+      return brands;
     } catch (error) {
       logProgress(`Error getting available brands: ${error.message}`, 'error');
       console.error('Full error:', error);
