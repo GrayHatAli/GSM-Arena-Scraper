@@ -65,54 +65,96 @@ export class ScraperService {
       // Extract brands from HTML response
       const html = response.data;
       
-      // Try multiple regex patterns to extract brand data (GSM Arena HTML structure may vary)
-      const brandPatterns = [
-        // Pattern 1: Standard format with img and br
-        /<a href="([^"]+)"[^>]*><img[^>]*src="([^"]+)"[^>]*><br>([^<]+)<\/a>/g,
-        // Pattern 2: Format with img and text in span or strong
-        /<a href="([^"]+)"[^>]*><img[^>]*src="([^"]+)"[^>]*><\/img>[\s\S]*?<span[^>]*>([^<]+)<\/span>/g,
-        // Pattern 3: Format with img and text after
-        /<a href="([^"]+)"[^>]*><img[^>]*src="([^"]+)"[^>]*>[\s\S]*?([A-Za-z0-9\s&]+)<\/a>/g,
-        // Pattern 4: More flexible - any link with img and text
-        /<a[^>]*href="([^"]+)"[^>]*>[\s\S]*?<img[^>]*src="([^"]+)"[^>]*>[\s\S]*?([A-Za-z0-9\s&]+)[\s\S]*?<\/a>/g,
-        // Pattern 5: Links in makers section
-        /<a[^>]*href="([^"]+)"[^>]*class="[^"]*makers[^"]*"[^>]*>[\s\S]*?<img[^>]*src="([^"]+)"[^>]*>[\s\S]*?([A-Za-z0-9\s&]+)[\s\S]*?<\/a>/g,
-        // Pattern 6: Links in st-text class (used by GSM Arena)
-        /<div[^>]*class="[^"]*st-text[^"]*"[^>]*>[\s\S]*?<a[^>]*href="([^"]+)"[^>]*>[\s\S]*?<img[^>]*src="([^"]+)"[^>]*>[\s\S]*?([A-Za-z0-9\s&]+)[\s\S]*?<\/a>/g,
-        // Pattern 7: Simple link with brand URL pattern (extract brand from URL)
-        /<a[^>]*href="([^"]*-phones-\d+\.php)"[^>]*>[\s\S]*?<img[^>]*src="([^"]+)"[^>]*>[\s\S]*?([A-Za-z0-9\s&]+)[\s\S]*?<\/a>/g
-      ];
-      
       const brands = [];
       const seenUrls = new Set();
       
-      for (const pattern of brandPatterns) {
-        let match;
-        pattern.lastIndex = 0; // Reset regex
+      // Pattern 1: Extract from table structure (current GSM Arena format)
+      // Matches: <td><a href="brand-phones-N.php">BrandName<br><span>N devices</span></a></td>
+      const tablePattern = /<td><a[^>]*href="([^"]*-phones-\d+\.php)"[^>]*>([^<]+)<br>/gi;
+      let tableMatch;
+      
+      while ((tableMatch = tablePattern.exec(html)) !== null) {
+        const href = tableMatch[1];
+        let name = tableMatch[2] ? tableMatch[2].trim() : '';
         
-        while ((match = pattern.exec(html)) !== null) {
-          const href = match[1];
-          const logoUrl = match[2];
-          let name = match[3] ? match[3].trim() : '';
+        // Skip if already processed
+        if (seenUrls.has(href)) {
+          continue;
+        }
+        
+        // Validate URL pattern
+        const brandUrlMatch = href.match(/([a-z0-9]+)-phones-\d+\.php/i);
+        if (!brandUrlMatch || !brandUrlMatch[1]) {
+          continue;
+        }
+        
+        // Extract brand name from URL as fallback
+        const brandNameFromUrl = brandUrlMatch[1].toLowerCase();
+        
+        // Clean up the name
+        if (name) {
+          name = name.replace(/\s+/g, ' ').trim();
+          name = name.replace(/<[^>]+>/g, '').trim(); // Remove any HTML tags
+          name = name.replace(/&[a-z]+;/gi, '').trim(); // Remove HTML entities
+        }
+        
+        // Use URL-based name if extracted name is invalid
+        if (!name || name.length < 2) {
+          name = brandNameFromUrl;
+        } else {
+          // Use the extracted name but normalize it
+          name = name.toLowerCase();
+        }
+        
+        // Skip invalid names
+        const invalidNames = ['object', 'function', 'undefined', 'null', 'true', 'false', 'this', 'var', 'let', 'const'];
+        if (invalidNames.includes(name) || name.length < 2) {
+          continue;
+        }
+        
+        // Format URL
+        let url = href.startsWith('http') ? href : this.baseUrl + '/' + href.replace(/^\/+/, '');
+        url = url.replace(/([^:]\/)\/+/g, '$1'); // Fix double slashes
+        
+        if (!url || url === this.baseUrl + '/' || url.endsWith('//')) {
+          continue;
+        }
+        
+        brands.push({
+          name: name.toLowerCase(),
+          url,
+          logo_url: '', // No logo in table structure
+          is_active: true
+        });
+        
+        seenUrls.add(href);
+      }
+      
+      // Pattern 2: Fallback - extract all brand URLs from the page
+      if (brands.length === 0) {
+        logProgress('No brands found in table structure, trying direct URL extraction...', 'info');
+        const urlPattern = /href="([^"]*-phones-\d+\.php)"/gi;
+        let urlMatch;
+        
+        while ((urlMatch = urlPattern.exec(html)) !== null) {
+          const href = urlMatch[1];
           
-          // Skip if we've already seen this URL
           if (seenUrls.has(href)) {
             continue;
           }
           
-          // Skip invalid entries - must have href
-          if (!href || typeof href !== 'string') {
+          const brandMatch = href.match(/([a-z0-9]+)-phones-\d+\.php/i);
+          if (!brandMatch || !brandMatch[1]) {
             continue;
           }
           
-          // CRITICAL: Only accept brand URLs that match the pattern *-phones-*.php
-          const brandUrlMatch = href.match(/([a-z0-9]+)-phones-\d+\.php/i);
-          if (!brandUrlMatch || !brandUrlMatch[1]) {
-            continue; // Skip if not a valid brand URL
-          }
+          const brandName = brandMatch[1].toLowerCase();
           
-          // Extract brand name from URL (most reliable source)
-          const brandNameFromUrl = brandUrlMatch[1].toLowerCase();
+          // Skip invalid names
+          const invalidNames = ['object', 'function', 'undefined', 'null', 'true', 'false', 'this', 'var', 'let', 'const'];
+          if (invalidNames.includes(brandName) || brandName.length < 2) {
+            continue;
+          }
           
           // Skip non-brand links
           if (href.includes('glossary') || 
@@ -130,100 +172,18 @@ export class ScraperService {
             continue;
           }
           
-          // Filter out invalid brand names (JavaScript keywords, etc.)
-          const invalidNames = ['object', 'function', 'undefined', 'null', 'true', 'false', 'this', 'var', 'let', 'const'];
-          if (invalidNames.includes(name.toLowerCase())) {
-            name = ''; // Force use of URL-based name
-          }
-          
-          // Clean up the name (remove extra whitespace, numbers at the end, etc.)
-          if (name) {
-            name = name.replace(/\s+/g, ' ').trim();
-            name = name.replace(/\d+.*$/, '').trim(); // Remove trailing numbers
-            // Remove HTML entities and tags
-            name = name.replace(/&[a-z]+;/gi, '').replace(/<[^>]+>/g, '').trim();
-          }
-          
-          // Use brand name from URL if name is invalid or empty
-          if (!name || name.length < 2 || invalidNames.includes(name.toLowerCase())) {
-            name = brandNameFromUrl;
-          }
-          
-          // Final validation - name must be at least 2 characters and not an invalid keyword
-          if (!name || name.length < 2 || invalidNames.includes(name.toLowerCase())) {
-            continue;
-          }
-          
-          // Ensure URL is properly formatted
+          // Format URL
           let url = href.startsWith('http') ? href : this.baseUrl + '/' + href.replace(/^\/+/, '');
-          // Fix double slashes (but preserve http://)
           url = url.replace(/([^:]\/)\/+/g, '$1');
+          
           if (!url || url === this.baseUrl + '/' || url.endsWith('//')) {
-            continue; // Skip malformed URLs
-          }
-          
-          const fullLogoUrl = logoUrl && typeof logoUrl === 'string' 
-            ? (logoUrl.startsWith('http') ? logoUrl : this.baseUrl + '/' + logoUrl.replace(/^\/+/, ''))
-            : '';
-          
-          brands.push({
-            name: name.toLowerCase(),
-            url,
-            logo_url: fullLogoUrl,
-            is_active: true
-          });
-          
-          seenUrls.add(href);
-        }
-        
-        // If we found brands with this pattern, stop trying others
-        if (brands.length > 0) {
-          break;
-        }
-      }
-      
-      // If no brands found with patterns, try extracting from URLs directly
-      if (brands.length === 0) {
-        logProgress('No brands found with patterns, trying URL-based extraction...', 'info');
-        const urlPattern = /href="([^"]*-phones-\d+\.php)"/g;
-        let urlMatch;
-        
-        while ((urlMatch = urlPattern.exec(html)) !== null) {
-          const href = urlMatch[1];
-          
-          // Validate it's a proper brand URL
-          const brandMatch = href.match(/([a-z0-9]+)-phones-\d+\.php/i);
-          if (!brandMatch || !brandMatch[1] || seenUrls.has(href)) {
             continue;
           }
-          
-          const brandName = brandMatch[1].toLowerCase();
-          
-          // Skip if brand name is invalid
-          const invalidNames = ['object', 'function', 'undefined', 'null', 'true', 'false', 'this', 'var', 'let', 'const'];
-          if (invalidNames.includes(brandName) || brandName.length < 2) {
-            continue;
-          }
-          
-          // Ensure URL is properly formatted
-          let url = href.startsWith('http') ? href : this.baseUrl + '/' + href.replace(/^\/+/, '');
-          // Fix double slashes (but preserve http://)
-          url = url.replace(/([^:]\/)\/+/g, '$1');
-          if (!url || url === this.baseUrl + '/' || url.endsWith('//')) {
-            continue; // Skip malformed URLs
-          }
-          
-          // Try to find logo URL near this link
-          const logoPattern = new RegExp(`href="${href.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"[^>]*>[\\s\\S]{0,500}<img[^>]*src="([^"]+)"`, 'i');
-          const logoMatch = html.match(logoPattern);
-          const logoUrl = logoMatch && logoMatch[1] && typeof logoMatch[1] === 'string'
-            ? (logoMatch[1].startsWith('http') ? logoMatch[1] : this.baseUrl + '/' + logoMatch[1].replace(/^\/+/, ''))
-            : '';
           
           brands.push({
             name: brandName,
             url,
-            logo_url: logoUrl,
+            logo_url: '', // No logo available
             is_active: true
           });
           
