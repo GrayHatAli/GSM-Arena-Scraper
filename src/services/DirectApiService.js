@@ -49,21 +49,16 @@ export class ScraperService {
       const html = response.data;
       
       const brands = [];
-      const seenUrls = new Set();
+      const brandDataMap = new Map(); // Store href -> {name, url} mapping
       
-      // Pattern 1: Extract from table structure (current GSM Arena format)
+      // Pattern 1: Extract from table structure with brand name
       // Matches: <td><a href="brand-phones-N.php">BrandName<br><span>N devices</span></a></td>
-      const tablePattern = /<td><a[^>]*href="([^"]*-phones-\d+\.php)"[^>]*>([^<]+)<br>/gi;
+      const tablePatternWithName = /<td><a[^>]*href="([^"]*-phones-\d+\.php)"[^>]*>([^<]+?)(?:<br|<\/a>)/gi;
       let tableMatch;
       
-      while ((tableMatch = tablePattern.exec(html)) !== null) {
+      while ((tableMatch = tablePatternWithName.exec(html)) !== null) {
         const href = tableMatch[1];
         let name = tableMatch[2] ? tableMatch[2].trim() : '';
-        
-        // Skip if already processed
-        if (seenUrls.has(href)) {
-          continue;
-        }
         
         // Validate URL pattern
         const brandUrlMatch = href.match(/([a-z0-9]+)-phones-\d+\.php/i);
@@ -103,78 +98,81 @@ export class ScraperService {
           continue;
         }
         
-        brands.push({
-          name: name.toLowerCase(),
-          url,
-          logo_url: '', // No logo in table structure
-          persian_name: name.toLowerCase(),
-          is_active: true
-        });
-        
-        seenUrls.add(href);
-      }
-      
-      // Pattern 2: Fallback - extract all brand URLs from the page
-      if (brands.length === 0) {
-        logProgress('No brands found in table structure, trying direct URL extraction...', 'info');
-        const urlPattern = /href="([^"]*-phones-\d+\.php)"/gi;
-        let urlMatch;
-        
-        while ((urlMatch = urlPattern.exec(html)) !== null) {
-          const href = urlMatch[1];
-          
-          if (seenUrls.has(href)) {
-            continue;
-          }
-          
-          const brandMatch = href.match(/([a-z0-9]+)-phones-\d+\.php/i);
-          if (!brandMatch || !brandMatch[1]) {
-            continue;
-          }
-          
-          const brandName = brandMatch[1].toLowerCase();
-          
-          // Skip invalid names
-          const invalidNames = ['object', 'function', 'undefined', 'null', 'true', 'false', 'this', 'var', 'let', 'const'];
-          if (invalidNames.includes(brandName) || brandName.length < 2) {
-            continue;
-          }
-          
-          // Skip non-brand links
-          if (href.includes('glossary') || 
-              href.includes('news') || 
-              href.includes('reviews') ||
-              href.includes('videos') ||
-              href.includes('deals') ||
-              href.includes('contact') ||
-              href.includes('coverage') ||
-              href.includes('search') ||
-              href.includes('phone-finder') ||
-              href.includes('network-bands') ||
-              href === '/' ||
-              href === '') {
-            continue;
-          }
-          
-          // Format URL
-          let url = href.startsWith('http') ? href : this.baseUrl + '/' + href.replace(/^\/+/, '');
-          url = url.replace(/([^:]\/)\/+/g, '$1');
-          
-          if (!url || url === this.baseUrl + '/' || url.endsWith('//')) {
-            continue;
-          }
-          
-          brands.push({
-            name: brandName,
+        // Store in map (will be deduplicated later)
+        if (!brandDataMap.has(href)) {
+          brandDataMap.set(href, {
+            name: name.toLowerCase(),
             url,
-            logo_url: '', // No logo available
-            persian_name: brandName,
+            logo_url: '',
+            persian_name: name.toLowerCase(),
             is_active: true
           });
-          
-          seenUrls.add(href);
         }
       }
+      
+      // Pattern 2: Extract ALL brand URLs from the page (comprehensive fallback)
+      // This ensures we get all brands even if table pattern missed some
+      const urlPattern = /href="([^"]*-phones-\d+\.php)"/gi;
+      let urlMatch;
+      
+      while ((urlMatch = urlPattern.exec(html)) !== null) {
+        const href = urlMatch[1];
+        
+        // Skip if already in map
+        if (brandDataMap.has(href)) {
+          continue;
+        }
+        
+        // Validate URL pattern
+        const brandMatch = href.match(/([a-z0-9]+)-phones-\d+\.php/i);
+        if (!brandMatch || !brandMatch[1]) {
+          continue;
+        }
+        
+        const brandName = brandMatch[1].toLowerCase();
+        
+        // Skip invalid names
+        const invalidNames = ['object', 'function', 'undefined', 'null', 'true', 'false', 'this', 'var', 'let', 'const'];
+        if (invalidNames.includes(brandName) || brandName.length < 2) {
+          continue;
+        }
+        
+        // Skip non-brand links
+        if (href.includes('glossary') || 
+            href.includes('news') || 
+            href.includes('reviews') ||
+            href.includes('videos') ||
+            href.includes('deals') ||
+            href.includes('contact') ||
+            href.includes('coverage') ||
+            href.includes('search') ||
+            href.includes('phone-finder') ||
+            href.includes('network-bands') ||
+            href === '/' ||
+            href === '') {
+          continue;
+        }
+        
+        // Format URL
+        let url = href.startsWith('http') ? href : this.baseUrl + '/' + href.replace(/^\/+/, '');
+        url = url.replace(/([^:]\/)\/+/g, '$1');
+        
+        if (!url || url === this.baseUrl + '/' || url.endsWith('//')) {
+          continue;
+        }
+        
+        // Add to map
+        brandDataMap.set(href, {
+          name: brandName,
+          url,
+          logo_url: '',
+          persian_name: brandName,
+          is_active: true
+        });
+      }
+      
+      // Convert map to array
+      brands.push(...Array.from(brandDataMap.values()));
       
       // Remove duplicates based on URL
       const uniqueBrands = [];
