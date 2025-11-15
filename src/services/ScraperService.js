@@ -412,96 +412,82 @@ export class ScraperService {
       const response = await this.apiClient.get(url);
       const html = response.data;
       
-      // Try multiple patterns to extract image URL
-      // Priority: Look for the specific structure: review-header > center-stage > a > img
       // CSS selector: #body > div > div.review-header > div > div.center-stage.light.nobg.specs-accent > div > a > img
+      // We need to find: div.review-header > div > div.center-stage.light.nobg.specs-accent > div > a > img
       
-      // First, try to find the center-stage div with specs-accent class
-      // Then find the img tag inside an <a> tag within that structure
-      // Use a more flexible approach: find center-stage with specs-accent, then look for a > img anywhere after it
-      const centerStageIndex = html.search(/<div[^>]*class="[^"]*center-stage[^"]*specs-accent[^"]*"/i);
-      if (centerStageIndex !== -1) {
-        // Get content after center-stage div starts
-        const afterCenterStage = html.substring(centerStageIndex);
-        // Look for <a><img> pattern (allowing for nested divs between center-stage and a)
-        const imgMatch = afterCenterStage.match(/<a[^>]*>[\s\S]*?<img[^>]*src="([^"]+)"/i);
-        if (imgMatch && imgMatch[1]) {
-          let imageUrl = imgMatch[1];
-          imageUrl = imageUrl.replace(/&amp;/g, '&');
-          if (!imageUrl.startsWith('http')) {
-            if (imageUrl.startsWith('//')) {
-              imageUrl = 'https:' + imageUrl;
-            } else if (imageUrl.startsWith('/')) {
-              imageUrl = 'https://www.gsmarena.com' + imageUrl;
-            } else {
-              imageUrl = 'https://www.gsmarena.com/' + imageUrl;
-            }
-          }
-          // Normalize to fdn2.gsmarena.com for images
-          if (imageUrl.includes('www.gsmarena.com') && (imageUrl.includes('/bigpic/') || imageUrl.includes('/vv/'))) {
-            imageUrl = imageUrl.replace('www.gsmarena.com', 'fdn2.gsmarena.com');
-          }
-          if (imageUrl.includes('bigpic') || imageUrl.includes('fdn') || imageUrl.includes('.jpg') || imageUrl.includes('.png')) {
-            logProgress(`Found image URL from center-stage: ${imageUrl}`, 'info');
-            return imageUrl;
+      // Use a more robust approach: find the center-stage div with all required classes first
+      // Then look for the img tag within that structure
+      
+      // Find all divs with center-stage class and check for required classes
+      const centerStageRegex = /<div[^>]*class="([^"]*center-stage[^"]*)"[^>]*>/gi;
+      let match;
+      let imageUrl = null;
+      
+      while ((match = centerStageRegex.exec(html)) !== null) {
+        const classes = match[1].toLowerCase();
+        // Check if it has all required classes: center-stage, light, nobg, specs-accent
+        if (classes.includes('center-stage') && 
+            classes.includes('light') && 
+            classes.includes('nobg') && 
+            classes.includes('specs-accent')) {
+          
+          // Found the correct center-stage div, now find the img tag
+          // Look for the pattern: <div>...<a>...<img src="...">
+          // We'll search from this position forward
+          const startPos = match.index;
+          const searchArea = html.substring(startPos, startPos + 5000); // Search next 5000 chars
+          
+          // Look for <a><img> pattern within the search area
+          const imgPattern = /<a[^>]*>[\s\S]*?<img[^>]*src="([^"]+)"/i;
+          const imgMatch = searchArea.match(imgPattern);
+          
+          if (imgMatch && imgMatch[1]) {
+            imageUrl = imgMatch[1];
+            break;
           }
         }
       }
       
-      // Fallback patterns
-      const imagePatterns = [
-        // Pattern 1: center-stage > a > img (any center-stage)
-        /<div[^>]*class="[^"]*center-stage[^"]*"[^>]*>[\s\S]*?<a[^>]*>[\s\S]*?<img[^>]*src="([^"]+)"/i,
-        // Pattern 2: review-header > a > img
-        /<div[^>]*class="[^"]*review-header[^"]*"[^>]*>[\s\S]*?<a[^>]*>[\s\S]*?<img[^>]*src="([^"]+)"/i,
-        // Pattern 3: Standard specs-photo-main
-        /<img[^>]*src="([^"]+)"[^>]*class="[^"]*specs-photo-main[^"]*"/i,
-        // Pattern 4: Alternative order
-        /<img[^>]*class="[^"]*specs-photo-main[^"]*"[^>]*src="([^"]+)"/i,
-        // Pattern 5: Inside specs-photo div
-        /<div[^>]*class="[^"]*specs-photo[^"]*"[^>]*>[\s\S]*?<img[^>]*src="([^"]+)"/i,
-        // Pattern 6: Any img with specs-photo class
-        /<img[^>]*class="[^"]*specs-photo[^"]*"[^>]*src="([^"]+)"/i,
-        // Pattern 7: Look for bigpic URLs (GSM Arena CDN format)
-        /src="([^"]*bigpic[^"]*)"/i,
-        // Pattern 8: Look for fdn2.gsmarena.com URLs
-        /src="(https?:\/\/[^"]*fdn[^"]*\.gsmarena\.com[^"]*)"/i
-      ];
+      if (!imageUrl) {
+        logProgress('Image not found using CSS selector path', 'warn');
+        return this.getFallbackImageUrl(deviceUrl);
+      }
       
-      for (const pattern of imagePatterns) {
-        const match = html.match(pattern);
-        if (match && match[1]) {
-          let imageUrl = match[1];
-          
-          // Clean up the URL
-          imageUrl = imageUrl.replace(/&amp;/g, '&');
-          
-          // If it's a relative URL, make it absolute
-          if (!imageUrl.startsWith('http')) {
-            // Handle different relative URL formats
-            if (imageUrl.startsWith('//')) {
-              imageUrl = 'https:' + imageUrl;
-            } else if (imageUrl.startsWith('/')) {
-              imageUrl = 'https://www.gsmarena.com' + imageUrl;
-            } else {
-              imageUrl = 'https://www.gsmarena.com/' + imageUrl;
-            }
-          }
-          
-          // Normalize the URL - GSM Arena uses fdn2.gsmarena.com for images
-          // Convert www.gsmarena.com to fdn2.gsmarena.com for image URLs
-          if (imageUrl.includes('www.gsmarena.com') && imageUrl.includes('/bigpic/')) {
-            imageUrl = imageUrl.replace('www.gsmarena.com', 'fdn2.gsmarena.com');
-          }
-          
-          // Ensure it's a valid image URL
-          if (imageUrl.includes('bigpic') || imageUrl.includes('fdn') || imageUrl.includes('.jpg') || imageUrl.includes('.png')) {
-            return imageUrl;
-          }
+      // Clean up and normalize the URL
+      imageUrl = imageUrl.replace(/&amp;/g, '&');
+      
+      // Convert relative URLs to absolute
+      if (!imageUrl.startsWith('http')) {
+        if (imageUrl.startsWith('//')) {
+          imageUrl = 'https:' + imageUrl;
+        } else if (imageUrl.startsWith('/')) {
+          imageUrl = 'https://www.gsmarena.com' + imageUrl;
+        } else {
+          imageUrl = 'https://www.gsmarena.com/' + imageUrl;
         }
       }
       
-      // Fallback: Try to construct URL from device URL
+      // Normalize to fdn2.gsmarena.com for images
+      if (imageUrl.includes('www.gsmarena.com') && (imageUrl.includes('/bigpic/') || imageUrl.includes('/vv/'))) {
+        imageUrl = imageUrl.replace('www.gsmarena.com', 'fdn2.gsmarena.com');
+      }
+      
+      logProgress(`Found image URL from selector: ${imageUrl}`, 'info');
+      return imageUrl;
+      
+    } catch (error) {
+      logProgress(`Error getting device image URL: ${error.message}`, 'warn');
+      return this.getFallbackImageUrl(deviceUrl);
+    }
+  }
+
+  /**
+   * Get fallback image URL by constructing it from device URL
+   * @param {string} deviceUrl - Device URL
+   * @returns {string|null} - Fallback image URL or null
+   */
+  getFallbackImageUrl(deviceUrl) {
+    try {
       // Extract device name from URL and construct image URL
       // Format: apple_iphone_16-13317.php -> apple-iphone-16
       const deviceNameMatch = deviceUrl.match(/([^\/]+)\.php$/);
@@ -517,10 +503,9 @@ export class ScraperService {
         logProgress(`Using fallback image URL: ${fallbackUrl}`, 'info');
         return fallbackUrl;
       }
-      
       return null;
     } catch (error) {
-      logProgress(`Error getting device image URL: ${error.message}`, 'warn');
+      logProgress(`Error generating fallback image URL: ${error.message}`, 'warn');
       return null;
     }
   }
