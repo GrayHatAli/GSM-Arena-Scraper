@@ -413,15 +413,14 @@ export class ScraperService {
       const html = response.data;
       
       // CSS selector: #body > div > div.review-header > div > div.center-stage.light.nobg.specs-accent > div > a > img
-      // We need to find: div.review-header > div > div.center-stage.light.nobg.specs-accent > div > a > img
+      // We need to extract the exact src attribute from this specific img tag
       
-      // Use a more robust approach: find the center-stage div with all required classes first
-      // Then look for the img tag within that structure
-      
-      // Find all divs with center-stage class and check for required classes
-      const centerStageRegex = /<div[^>]*class="([^"]*center-stage[^"]*)"[^>]*>/gi;
+      // Find center-stage div with all required classes (light, nobg, specs-accent)
+      // The classes can be in any order in the class attribute
+      const centerStageRegex = /<div[^>]*class="([^"]*)"[^>]*>/gi;
+      let centerStageMatch = null;
+      let centerStageIndex = -1;
       let match;
-      let imageUrl = null;
       
       while ((match = centerStageRegex.exec(html)) !== null) {
         const classes = match[1].toLowerCase();
@@ -430,28 +429,31 @@ export class ScraperService {
             classes.includes('light') && 
             classes.includes('nobg') && 
             classes.includes('specs-accent')) {
-          
-          // Found the correct center-stage div, now find the img tag
-          // Look for the pattern: <div>...<a>...<img src="...">
-          // We'll search from this position forward
-          const startPos = match.index;
-          const searchArea = html.substring(startPos, startPos + 5000); // Search next 5000 chars
-          
-          // Look for <a><img> pattern within the search area
-          const imgPattern = /<a[^>]*>[\s\S]*?<img[^>]*src="([^"]+)"/i;
-          const imgMatch = searchArea.match(imgPattern);
-          
-          if (imgMatch && imgMatch[1]) {
-            imageUrl = imgMatch[1];
-            break;
-          }
+          centerStageMatch = match;
+          centerStageIndex = match.index;
+          break;
         }
       }
       
-      if (!imageUrl) {
-        logProgress('Image not found using CSS selector path', 'warn');
-        return this.getFallbackImageUrl(deviceUrl);
+      if (!centerStageMatch || centerStageIndex === -1) {
+        logProgress('center-stage.light.nobg.specs-accent div not found', 'error');
+        return null;
       }
+      
+      // Search from center-stage div forward (next 2000 chars should be enough)
+      const searchArea = html.substring(centerStageIndex, centerStageIndex + 2000);
+      
+      // Find the pattern: <div>...<a>...<img src="...">
+      // We'll look for <a> tag first, then <img> inside it
+      const anchorPattern = /<a[^>]*>[\s\S]*?<img[^>]*src="([^"]+)"/i;
+      const imgMatch = searchArea.match(anchorPattern);
+      
+      if (!imgMatch || !imgMatch[1]) {
+        logProgress('Image tag with src not found in center-stage structure', 'error');
+        return null;
+      }
+      
+      let imageUrl = imgMatch[1];
       
       // Clean up and normalize the URL
       imageUrl = imageUrl.replace(/&amp;/g, '&');
@@ -476,39 +478,11 @@ export class ScraperService {
       return imageUrl;
       
     } catch (error) {
-      logProgress(`Error getting device image URL: ${error.message}`, 'warn');
-      return this.getFallbackImageUrl(deviceUrl);
+      logProgress(`Error getting device image URL: ${error.message}`, 'error');
+      return null;
     }
   }
 
-  /**
-   * Get fallback image URL by constructing it from device URL
-   * @param {string} deviceUrl - Device URL
-   * @returns {string|null} - Fallback image URL or null
-   */
-  getFallbackImageUrl(deviceUrl) {
-    try {
-      // Extract device name from URL and construct image URL
-      // Format: apple_iphone_16-13317.php -> apple-iphone-16
-      const deviceNameMatch = deviceUrl.match(/([^\/]+)\.php$/);
-      if (deviceNameMatch) {
-        let deviceSlug = deviceNameMatch[1];
-        // Remove device ID from the end (e.g., -13317)
-        deviceSlug = deviceSlug.replace(/-\d+$/, '');
-        // Replace underscores with dashes
-        deviceSlug = deviceSlug.replace(/_/g, '-');
-        // Convert to lowercase
-        deviceSlug = deviceSlug.toLowerCase();
-        const fallbackUrl = `https://fdn2.gsmarena.com/vv/bigpic/${deviceSlug}.jpg`;
-        logProgress(`Using fallback image URL: ${fallbackUrl}`, 'info');
-        return fallbackUrl;
-      }
-      return null;
-    } catch (error) {
-      logProgress(`Error generating fallback image URL: ${error.message}`, 'warn');
-      return null;
-    }
-  }
 
   /**
    * Get device specifications
