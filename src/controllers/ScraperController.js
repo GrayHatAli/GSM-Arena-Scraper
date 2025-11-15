@@ -10,7 +10,7 @@ export class ScraperController {
 
   /**
    * Scrape specific brands
-   * @param {Array} brands - Array of brand names
+   * @param {Array} brands - Array of brand names (empty array scrapes all brands)
    * @param {Object} options - Scraping options
    * @returns {Object} - Scraping result
    */
@@ -30,30 +30,12 @@ export class ScraperController {
   }
 
   /**
-   * Get all available brands
-   * @returns {Object} - List of all brands
+   * Scrape all brands
+   * @param {Object} options - Scraping options
+   * @returns {Object} - Scraping result
    */
-  async getAllBrands() {
-    try {
-      const brands = await this.scraperService.getAllBrands();
-      return ResponseHelper.success('Retrieved all brands successfully', { brands });
-    } catch (error) {
-      return ResponseHelper.error('Failed to get brands', error.message);
-    }
-  }
-
-  /**
-   * Get devices by brand name
-   * @param {string} brandName - Brand name
-   * @returns {Object} - List of devices for the brand
-   */
-  async getDevicesByBrand(brandName) {
-    try {
-      const devices = await this.scraperService.getDevicesByBrand(brandName);
-      return ResponseHelper.success(`Retrieved devices for ${brandName} successfully`, { devices });
-    } catch (error) {
-      return ResponseHelper.error(`Failed to get devices for ${brandName}`, error.message);
-    }
+  async scrapeAll(options = {}) {
+    return this.scrapeBrands([], options);
   }
 
   /**
@@ -71,46 +53,22 @@ export class ScraperController {
   }
 
   /**
-   * Find devices by keyword
-   * @param {string} keyword - Search keyword
-   * @returns {Object} - List of matching devices
+   * Search devices with filters
+   * Supports brand_name, keyword, minYear, and excludeKeywords filters
+   * Returns devices with deviceId in the response
+   * @param {Object} filters - Search filters
+   * @param {string} filters.keyword - Search keyword
+   * @param {string} filters.brand_name - Filter by brand name
+   * @param {number} filters.minYear - Minimum year filter
+   * @param {Array} filters.excludeKeywords - Keywords to exclude
+   * @returns {Object} - List of matching devices with deviceId
    */
-  async findDevicesByKeyword(keyword) {
+  async searchDevices(filters = {}) {
     try {
-      const devices = await this.scraperService.findDevicesByKeyword(keyword);
-      return ResponseHelper.success(`Found ${devices.length} devices matching "${keyword}"`, { devices });
+      const devices = await this.scraperService.searchDevices(filters);
+      return ResponseHelper.success(`Found ${devices.length} devices`, { devices });
     } catch (error) {
       return ResponseHelper.error('Failed to search devices', error.message);
-    }
-  }
-
-  /**
-   * Get available brands from GSM Arena
-   * @returns {Object} - Available brands
-   */
-  async getAvailableBrands() {
-    try {
-      const brands = await this.scraperService.getAvailableBrands();
-      return ResponseHelper.success('Available brands retrieved successfully', {
-        brands,
-        total_brands: brands.length
-      });
-    } catch (error) {
-      return ResponseHelper.error('Failed to get available brands', error.message);
-    }
-  }
-
-  /**
-   * Test scraping with single brand
-   * @param {string} brandName - Brand name to test
-   * @returns {Object} - Test result
-   */
-  async testScraping(brandName = 'apple') {
-    try {
-      const result = await this.scraperService.testScraping(brandName);
-      return ResponseHelper.success('Test scraping completed successfully', result);
-    } catch (error) {
-      return ResponseHelper.error('Test scraping failed', error.message);
     }
   }
 

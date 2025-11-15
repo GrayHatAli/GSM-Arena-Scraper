@@ -41,27 +41,14 @@ export class ScraperAPIClient {
   }
 
   /**
-   * Get available brands
-   * @returns {Promise<Object>} - Available brands
-   */
-  async getAvailableBrands() {
-    try {
-      const response = await this.client.get('/brands');
-      return response.data;
-    } catch (error) {
-      throw new Error(`Failed to get available brands: ${error.message}`);
-    }
-  }
-
-  /**
-   * Scrape specific brands
-   * @param {Array} brands - Array of brand names
+   * Scrape brands
+   * @param {Array} brands - Array of brand names (optional - if empty, scrapes all brands)
    * @param {Object} options - Scraping options
    * @returns {Promise<Object>} - Scraping result
    */
-  async scrapeBrands(brands, options = {}) {
+  async scrapeBrands(brands = [], options = {}) {
     try {
-      const response = await this.client.post('/brands/scrape', {
+      const response = await this.client.post('/brands', {
         brands,
         options
       });
@@ -72,51 +59,34 @@ export class ScraperAPIClient {
   }
 
   /**
-   * Scrape specific brand models
-   * @param {string} brandName - Brand name
-   * @param {Object} options - Scraping options
-   * @returns {Promise<Object>} - Scraping result
+   * Search devices with filters
+   * @param {Object} filters - Search filters
+   * @param {string} filters.keyword - Search keyword
+   * @param {string} filters.brand_name - Filter by brand name
+   * @param {number} filters.minYear - Minimum year filter
+   * @param {Array} filters.excludeKeywords - Keywords to exclude
+   * @returns {Promise<Object>} - Search results with devices
    */
-  async scrapeBrandModels(brandName, options = {}) {
+  async searchDevices(filters = {}) {
     try {
-      const response = await this.client.post(`/brands/${brandName}/scrape`, {
-        options
-      });
+      const response = await this.client.post('/devices/search', filters);
       return response.data;
     } catch (error) {
-      throw new Error(`Failed to scrape brand models: ${error.message}`);
+      throw new Error(`Failed to search devices: ${error.message}`);
     }
   }
 
   /**
-   * Scrape all brands
-   * @param {Object} options - Scraping options
-   * @returns {Promise<Object>} - Scraping result
+   * Get device specifications
+   * @param {string} deviceId - Device ID
+   * @returns {Promise<Object>} - Device specifications
    */
-  async scrapeAll(options = {}) {
+  async getDeviceSpecifications(deviceId) {
     try {
-      const response = await this.client.post('/scrape/all', {
-        options
-      });
+      const response = await this.client.get(`/devices/${deviceId}/specifications`);
       return response.data;
     } catch (error) {
-      throw new Error(`Failed to scrape all brands: ${error.message}`);
-    }
-  }
-
-  /**
-   * Test scraping
-   * @param {string} brandName - Brand name to test
-   * @returns {Promise<Object>} - Test result
-   */
-  async testScraping(brandName = 'apple') {
-    try {
-      const response = await this.client.post('/scrape/test', {
-        brandName
-      });
-      return response.data;
-    } catch (error) {
-      throw new Error(`Test scraping failed: ${error.message}`);
+      throw new Error(`Failed to get device specifications: ${error.message}`);
     }
   }
 

@@ -17,7 +17,7 @@ info:
 servers:
   - url: http://localhost:3002
     description: Development server
-  - url: https://your-domain.com
+  - url: https://gsm-arena-scraper.vercel.app
     description: Production server
 
 paths:
@@ -89,69 +89,13 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
 
   /brands:
-    get:
-      summary: Get Available Brands
-      description: Get list of all available brands that can be scraped
-      tags:
-        - Brands
-      responses:
-        '200':
-          description: Brands retrieved successfully
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-                  data:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Brand'
-        '500':
-          description: Internal server error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-
-  /brands/all:
-    get:
-      summary: Get All Brands (Detailed)
-      description: Get detailed information about all available brands
-      tags:
-        - Brands
-      responses:
-        '200':
-          description: All brands retrieved successfully
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-                  data:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Brand'
-        '500':
-          description: Internal server error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-
-  /brands/scrape:
     post:
       summary: Scrape Brands
       description: |
         Scrape data for specified brands or all brands if none specified.
-        This is the main endpoint for scraping mobile device data.
+        Includes search and filter parameters for brand scraping operations.
       tags:
-        - Scraping
+        - Brands
       requestBody:
         required: false
         content:
@@ -196,91 +140,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
-  /brands/{brandName}/scrape:
-    post:
-      summary: Scrape Specific Brand Models
-      description: Scrape models for a specific brand
-      tags:
-        - Scraping
-      parameters:
-        - name: brandName
-          in: path
-          required: true
-          description: Name of the brand to scrape
-          schema:
-            type: string
-            example: "apple"
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                options:
-                  $ref: '#/components/schemas/ScrapingOptions'
-      responses:
-        '200':
-          description: Brand scraping completed successfully
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-                  data:
-                    $ref: '#/components/schemas/BrandResult'
-        '400':
-          description: Bad request - Brand name is required
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '500':
-          description: Internal server error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-
-  /brands/{brandName}/devices:
-    get:
-      summary: Get Devices by Brand
-      description: Get list of devices for a specific brand
-      tags:
-        - Devices
-      parameters:
-        - name: brandName
-          in: path
-          required: true
-          description: Name of the brand
-          schema:
-            type: string
-            example: "apple"
-      responses:
-        '200':
-          description: Devices retrieved successfully
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-                  data:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Device'
-        '500':
-          description: Internal server error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-
   /devices/{deviceId}/specifications:
     get:
       summary: Get Device Specifications
@@ -316,19 +175,39 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
 
   /devices/search:
-    get:
-      summary: Search Devices by Keyword
-      description: Search for devices using a keyword
+    post:
+      summary: Search Devices
+      description: |
+        Search for devices with filters and search parameters.
+        Supports filtering by brand_name and other criteria.
+        Returns devices with deviceId in the response.
       tags:
         - Devices
-      parameters:
-        - name: keyword
-          in: query
-          required: true
-          description: Search keyword
-          schema:
-            type: string
-            example: "iPhone 15"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                keyword:
+                  type: string
+                  description: Search keyword
+                  example: "iPhone 15"
+                brand_name:
+                  type: string
+                  description: Filter by brand name
+                  example: "apple"
+                minYear:
+                  type: integer
+                  description: Minimum year filter
+                  example: 2023
+                excludeKeywords:
+                  type: array
+                  items:
+                    type: string
+                  description: Keywords to exclude from results
+                  example: ["prototype", "concept"]
       responses:
         '200':
           description: Search results retrieved successfully
@@ -341,11 +220,14 @@ paths:
                     type: boolean
                     example: true
                   data:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Device'
+                    type: object
+                    properties:
+                      devices:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Device'
         '400':
-          description: Bad request - Keyword parameter is required
+          description: Bad request
           content:
             application/json:
               schema:
@@ -357,42 +239,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
-  /scrape/test:
-    post:
-      summary: Test Scraping
-      description: Test the scraping functionality with a single brand
-      tags:
-        - Scraping
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                brandName:
-                  type: string
-                  description: Brand name to test (defaults to 'apple')
-                  example: "apple"
-      responses:
-        '200':
-          description: Test scraping completed successfully
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-                  data:
-                    $ref: '#/components/schemas/TestResult'
-        '500':
-          description: Internal server error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
 
   /data/latest:
     get:
@@ -498,6 +344,10 @@ components:
     Device:
       type: object
       properties:
+        deviceId:
+          type: string
+          description: Unique device identifier
+          example: "12345"
         name:
           type: string
           example: "iPhone 17 Pro Max"
@@ -507,6 +357,10 @@ components:
         year:
           type: integer
           example: 2025
+        brand_name:
+          type: string
+          description: Brand name of the device
+          example: "apple"
 
     DeviceSpecifications:
       type: object
@@ -697,10 +551,8 @@ tags:
   - name: System
     description: System health and status endpoints
   - name: Brands
-    description: Brand-related operations
+    description: Brand-related operations including scraping
   - name: Devices
-    description: Device-related operations
-  - name: Scraping
-    description: Data scraping operations
+    description: Device-related operations including search and specifications
   - name: Data
     description: Data management operations

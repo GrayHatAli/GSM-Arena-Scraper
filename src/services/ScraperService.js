@@ -636,18 +636,27 @@ export class ScraperService {
 
   /**
    * Scrape multiple brands
-   * @param {Array} brands - Array of brand names or brand objects
+   * @param {Array} brands - Array of brand names or brand objects (empty array scrapes all brands)
    * @param {Object} options - Scraping options
    * @returns {Promise<Object>} - Scraping result with brands and models
    */
   async scrapeBrands(brands, options = {}) {
     try {
-      logProgress(`Starting to scrape ${brands.length} brands`, 'info');
+      // If brands array is empty, get all available brands
+      let brandsToScrape = brands;
+      if (!brands || brands.length === 0) {
+        logProgress('No brands specified, fetching all available brands...', 'info');
+        const allBrands = await this.getAllBrands();
+        brandsToScrape = allBrands;
+        logProgress(`Found ${allBrands.length} brands to scrape`, 'info');
+      }
+      
+      logProgress(`Starting to scrape ${brandsToScrape.length} brands`, 'info');
       
       const results = [];
       let totalModels = 0;
       
-      for (const brand of brands) {
+      for (const brand of brandsToScrape) {
         let brandObj;
         
         // Handle both string brand names and brand objects
@@ -685,12 +694,104 @@ export class ScraperService {
   }
 
   /**
-   * Get devices by brand name (alias for searchDevicesByBrand)
-   * @param {string} brandName - Brand name
-   * @returns {Promise<Array>} - List of devices for the brand
+   * Extract device ID from URL
+   * @param {string} url - Device URL
+   * @returns {string|null} - Device ID or null
    */
-  async getDevicesByBrand(brandName) {
-    return this.searchDevicesByBrand(brandName);
+  extractDeviceIdFromUrl(url) {
+    if (!url) return null;
+    
+    // Try to extract device ID from various URL patterns
+    // Pattern 1: device-12345.php
+    let match = url.match(/device-(\d+)\.php/);
+    if (match) return match[1];
+    
+    // Pattern 2: brand_model-12345.php
+    match = url.match(/-(\d+)\.php$/);
+    if (match) return match[1];
+    
+    // Pattern 3: Extract from path segments
+    const segments = url.split('/').filter(s => s);
+    const lastSegment = segments[segments.length - 1];
+    if (lastSegment) {
+      match = lastSegment.match(/-(\d+)\.php$/);
+      if (match) return match[1];
+    }
+    
+    // If no pattern matches, generate a hash from the URL
+    // This is a fallback to ensure we always have a deviceId
+    return Buffer.from(url).toString('base64').substring(0, 10).replace(/[^a-zA-Z0-9]/g, '');
+  }
+
+  /**
+   * Search devices with filters
+   * Supports brand_name, keyword, minYear, and excludeKeywords filters
+   * Returns devices with deviceId in the response
+   * @param {Object} filters - Search filters
+   * @param {string} filters.keyword - Search keyword
+   * @param {string} filters.brand_name - Filter by brand name
+   * @param {number} filters.minYear - Minimum year filter
+   * @param {Array} filters.excludeKeywords - Keywords to exclude
+   * @returns {Promise<Array>} - List of devices with deviceId
+   */
+  async searchDevices(filters = {}) {
+    try {
+      const { keyword, brand_name, minYear, excludeKeywords } = filters;
+      
+      // Determine search term - prefer brand_name over keyword
+      const searchTerm = brand_name || keyword;
+      
+      if (!searchTerm) {
+        logProgress('No search term provided (keyword or brand_name required)', 'warn');
+        return [];
+      }
+      
+      // Get devices using the search term
+      const options = {
+        minYear: minYear || null,
+        excludeKeywords: excludeKeywords || []
+      };
+      
+      const devices = await this.searchDevicesByBrand(searchTerm, options);
+      
+      // Add deviceId to each device
+      const devicesWithId = devices.map(device => {
+        const deviceId = this.extractDeviceIdFromUrl(device.url);
+        return {
+          deviceId: deviceId || 'unknown',
+          name: device.name,
+          url: device.url,
+          year: device.year,
+          brand_name: brand_name || searchTerm
+        };
+      });
+      
+      // Apply additional filters if needed
+      let filteredDevices = devicesWithId;
+      
+      // Filter by year if specified
+      if (minYear) {
+        filteredDevices = filteredDevices.filter(device => {
+          return !device.year || device.year >= minYear;
+        });
+      }
+      
+      // Filter by excludeKeywords if specified
+      if (excludeKeywords && excludeKeywords.length > 0) {
+        filteredDevices = filteredDevices.filter(device => {
+          const nameLower = device.name.toLowerCase();
+          return !excludeKeywords.some(keyword => 
+            nameLower.includes(keyword.toLowerCase())
+          );
+        });
+      }
+      
+      logProgress(`Found ${filteredDevices.length} devices matching filters`, 'success');
+      return filteredDevices;
+    } catch (error) {
+      logProgress(`Error searching devices: ${error.message}`, 'error');
+      return [];
+    }
   }
 
   /**
@@ -706,44 +807,6 @@ export class ScraperService {
     };
     
     return this.getDeviceSpecifications(device, {});
-  }
-
-  /**
-   * Find devices by keyword
-   * @param {string} keyword - Search keyword
-   * @returns {Promise<Array>} - List of matching devices
-   */
-  async findDevicesByKeyword(keyword) {
-    return this.searchDevicesByBrand(keyword);
-  }
-
-  /**
-   * Get available brands from GSM Arena
-   * @returns {Array} - Available brands
-   */
-  async getAvailableBrands() {
-    return this.getAllBrands();
-  }
-
-  /**
-   * Test scraping with single brand
-   * @param {string} brandName - Brand name to test
-   * @returns {Object} - Test result
-   */
-  async testScraping(brandName = 'apple') {
-    const options = {
-      modelsPerBrand: 3,
-      minYear: undefined // No year filtering for test
-    };
-
-    const result = await this.scrapeBrands([brandName], options);
-    
-    return {
-      brand: result.brands[0] || null,
-      scraped_at: result.scraped_at,
-      total_models: result.total_models,
-      test_mode: true
-    };
   }
 
   /**

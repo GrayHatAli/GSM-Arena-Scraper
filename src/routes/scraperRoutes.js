@@ -66,18 +66,11 @@ export class ScraperRoutes {
       'GET /status': this.getStatus.bind(this),
       
       // Brand endpoints
-      'GET /brands': this.getAvailableBrands.bind(this),
-      'POST /brands/scrape': this.scrapeBrands.bind(this),
-      'POST /brands/:brandName/scrape': this.scrapeBrandModels.bind(this),
+      'POST /brands': this.scrapeBrands.bind(this),
       
-      // New endpoints for the requested features
-      'GET /brands/all': this.getAllBrands.bind(this),
-      'GET /brands/:brandName/devices': this.getDevicesByBrand.bind(this),
+      // Device endpoints
       'GET /devices/:deviceId/specifications': this.getDeviceSpecifications.bind(this),
-      'GET /devices/search': this.findDevicesByKeyword.bind(this),
-      
-      // Scraping endpoints
-      'POST /scrape/test': this.testScraping.bind(this),
+      'POST /devices/search': this.searchDevices.bind(this),
       
       // Data endpoints
       'GET /data/latest': this.getLatestData.bind(this),
@@ -130,25 +123,8 @@ export class ScraperRoutes {
   }
 
   /**
-   * Get available brands
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
-   */
-  async getAvailableBrands(req, res) {
-    try {
-      const result = await this.controller.getAvailableBrands();
-      res.json(result);
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: 'Failed to get available brands',
-        error: error.message
-      });
-    }
-  }
-
-  /**
    * Scrape brands (all brands if none specified)
+   * Includes search and filter parameters from the old brands/scrape route
    * @param {Object} req - Request object
    * @param {Object} res - Response object
    */
@@ -169,54 +145,6 @@ export class ScraperRoutes {
       res.status(500).json({
         success: false,
         message: 'Failed to scrape brands',
-        error: error.message
-      });
-    }
-  }
-
-  /**
-   * Scrape specific brand models
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
-   */
-  async scrapeBrandModels(req, res) {
-    try {
-      const { brandName } = req.params;
-      const { options = {} } = req.body;
-
-      if (!brandName) {
-        return res.status(400).json({
-          success: false,
-          message: 'Brand name is required',
-          error: 'Missing brandName parameter'
-        });
-      }
-
-      const result = await this.controller.scrapeBrandModels(brandName, options);
-      res.json(result);
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: 'Failed to scrape brand models',
-        error: error.message
-      });
-    }
-  }
-
-  /**
-   * Test scraping
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
-   */
-  async testScraping(req, res) {
-    try {
-      const { brandName = 'apple' } = req.body;
-      const result = await this.controller.testScraping(brandName);
-      res.json(result);
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: 'Test scraping failed',
         error: error.message
       });
     }
@@ -276,42 +204,6 @@ export class ScraperRoutes {
     }
   }
 
-  /**
-   * Get all available brands
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
-   */
-  async getAllBrands(req, res) {
-    try {
-      const result = await this.controller.getAllBrands();
-      res.json(result);
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: 'Failed to get all brands',
-        error: error.message
-      });
-    }
-  }
-
-  /**
-   * Get devices by brand name
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
-   */
-  async getDevicesByBrand(req, res) {
-    try {
-      const { brandName } = req.params;
-      const result = await this.controller.getDevicesByBrand(brandName);
-      res.json(result);
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: 'Failed to get devices by brand',
-        error: error.message
-      });
-    }
-  }
 
   /**
    * Get device specifications
@@ -333,22 +225,24 @@ export class ScraperRoutes {
   }
 
   /**
-   * Find devices by keyword
+   * Search devices with filters and search parameters
+   * Supports brand_name, keyword, minYear, and excludeKeywords filters
+   * Returns devices with deviceId in the response
    * @param {Object} req - Request object
    * @param {Object} res - Response object
    */
-  async findDevicesByKeyword(req, res) {
+  async searchDevices(req, res) {
     try {
-      const { keyword } = req.query;
+      const { keyword, brand_name, minYear, excludeKeywords } = req.body;
       
-      if (!keyword) {
-        return res.status(400).json({
-          success: false,
-          message: 'Keyword parameter is required'
-        });
-      }
+      const filters = {
+        keyword,
+        brand_name,
+        minYear,
+        excludeKeywords
+      };
       
-      const result = await this.controller.findDevicesByKeyword(keyword);
+      const result = await this.controller.searchDevices(filters);
       res.json(result);
     } catch (error) {
       res.status(500).json({

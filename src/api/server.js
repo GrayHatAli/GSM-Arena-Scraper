@@ -113,18 +113,11 @@ export class ScraperAPI {
     this.app.get('/status', routeDefinitions['GET /status']);
 
     // Brand endpoints
-    this.app.get('/brands', routeDefinitions['GET /brands']);
-    this.app.get('/brands/all', routeDefinitions['GET /brands/all']);
-    this.app.post('/brands/scrape', routeDefinitions['POST /brands/scrape']);
-    this.app.post('/brands/:brandName/scrape', routeDefinitions['POST /brands/:brandName/scrape']);
-    this.app.get('/brands/:brandName/devices', routeDefinitions['GET /brands/:brandName/devices']);
+    this.app.post('/brands', routeDefinitions['POST /brands']);
 
     // Device endpoints
     this.app.get('/devices/:deviceId/specifications', routeDefinitions['GET /devices/:deviceId/specifications']);
-    this.app.get('/devices/search', routeDefinitions['GET /devices/search']);
-
-    // Scraping endpoints
-    this.app.post('/scrape/test', routeDefinitions['POST /scrape/test']);
+    this.app.post('/devices/search', routeDefinitions['POST /devices/search']);
 
     // Data endpoints
     this.app.get('/data/latest', routeDefinitions['GET /data/latest']);
@@ -159,10 +152,9 @@ export class ScraperAPI {
       console.log(`📚 API Documentation:`);
       console.log(`   GET  /health - Health check`);
       console.log(`   GET  /status - Get scraping status`);
-      console.log(`   GET  /brands - Get available brands`);
-      console.log(`   POST /brands/scrape - Scrape brands (all brands if none specified)`);
-      console.log(`   POST /brands/:brandName/scrape - Scrape brand models`);
-      console.log(`   POST /scrape/test - Test scraping`);
+      console.log(`   POST /brands - Scrape brands (includes search and filter parameters)`);
+      console.log(`   GET  /devices/:deviceId/specifications - Get device specifications`);
+      console.log(`   POST /devices/search - Search devices (with filters and deviceId)`);
       console.log(`   GET  /data/latest - Get latest data`);
       console.log(`   POST /data/save - Save data`);
       console.log(`📖 Swagger Documentation:`);

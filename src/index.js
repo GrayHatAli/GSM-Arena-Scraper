@@ -65,9 +65,9 @@ async function testAPI() {
     const status = await client.getStatus();
     console.log('✅ Status:', status.data);
     
-    // Test brands
-    const brands = await client.getAvailableBrands();
-    console.log(`✅ Available brands: ${brands.data.length}`);
+    // Test device search
+    const searchResult = await client.searchDevices({ brand_name: 'apple' });
+    console.log(`✅ Device search: Found ${searchResult.data?.devices?.length || 0} devices`);
     
     console.log('🎉 API Client test completed successfully!');
     
