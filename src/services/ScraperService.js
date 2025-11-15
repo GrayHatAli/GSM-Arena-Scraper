@@ -247,7 +247,13 @@ export class ScraperService {
             // Pattern 4: Links in makers section
             /<a href="([^"]+)"[^>]*class="[^"]*makers[^"]*"[^>]*>([^<]+)<\/a>/g,
             // Pattern 5: Device links in specific containers
-            /<a href="([^"]+)"[^>]*class="[^"]*phone[^"]*"[^>]*>([^<]+)<\/a>/g
+            /<a href="([^"]+)"[^>]*class="[^"]*phone[^"]*"[^>]*>([^<]+)<\/a>/g,
+            // Pattern 6: More flexible pattern for device links
+            /<a\s+href="([^"]+)"[^>]*>\s*<img[^>]*>\s*<strong>([^<]+)<\/strong>/gi,
+            // Pattern 7: Pattern for div-based device listings
+            /<div[^>]*>\s*<a\s+href="([^"]+)"[^>]*>\s*<img[^>]*>\s*([^<]+)<\/a>/gi,
+            // Pattern 8: Generic pattern for any link containing device name patterns
+            /<a\s+href="([^"]+-[^"]+\.php)"[^>]*>([^<]*iPhone[^<]*|[^<]*Galaxy[^<]*|[^<]*Pixel[^<]*|[^<]*Xiaomi[^<]*|[^<]*Huawei[^<]*)/gi
           ];
           
           for (const pattern of devicePatterns) {
@@ -302,7 +308,10 @@ export class ScraperService {
                 }
               }
               
-              // Note: minYear filter will be applied later after getting specifications
+              // Apply minYear filter early if year is available
+              if (options.minYear && extractedYear && extractedYear < options.minYear) {
+                continue;
+              }
               
               // Apply keyword exclusion if specified
               if (options.excludeKeywords && options.excludeKeywords.length > 0) {
@@ -558,16 +567,38 @@ export class ScraperService {
     try {
       logProgress(`Scraping brand: ${brand.name}`, 'info');
       
+      // Merge excludeKeywords from options with CONFIG defaults (remove duplicates)
+      const excludeKeywords = [
+        ...new Set([
+          ...(CONFIG.EXCLUDE_KEYWORDS || []),
+          ...(options.excludeKeywords || [])
+        ])
+      ];
+      
       // Get devices for the brand
       const devices = await this.searchDevicesByBrand(brand.name, {
         minYear: options.minYear,
-        excludeKeywords: CONFIG.EXCLUDE_KEYWORDS
+        excludeKeywords: excludeKeywords
       });
+      
+      logProgress(`Found ${devices.length} devices for brand ${brand.name}`, 'info');
+      
+      if (devices.length === 0) {
+        logProgress(`No devices found for brand ${brand.name}. This might be due to filters or parsing issues.`, 'warn');
+        return {
+          name: brand.name,
+          logo_url: brand.logo_url || `${this.baseUrl}/img/logo_${brand.name}.png`,
+          is_active: true,
+          models: []
+        };
+      }
       
       // Convert devices to models with detailed specifications
       const models = [];
       const modelsPerBrand = options.modelsPerBrand || devices.length;
       const devicesToProcess = devices.slice(0, modelsPerBrand);
+      
+      logProgress(`Processing ${devicesToProcess.length} devices (limited by modelsPerBrand: ${modelsPerBrand})`, 'info');
       
       for (const device of devicesToProcess) {
         try {
