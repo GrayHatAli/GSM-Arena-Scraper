@@ -413,19 +413,55 @@ export class ScraperService {
       const html = response.data;
       
       // Try multiple patterns to extract image URL
+      // Priority: Look for the specific structure: review-header > center-stage > a > img
+      // CSS selector: #body > div > div.review-header > div > div.center-stage.light.nobg.specs-accent > div > a > img
+      
+      // First, try to find the center-stage div with specs-accent class
+      // Then find the img tag inside an <a> tag within that structure
+      // Use a more flexible approach: find center-stage with specs-accent, then look for a > img anywhere after it
+      const centerStageIndex = html.search(/<div[^>]*class="[^"]*center-stage[^"]*specs-accent[^"]*"/i);
+      if (centerStageIndex !== -1) {
+        // Get content after center-stage div starts
+        const afterCenterStage = html.substring(centerStageIndex);
+        // Look for <a><img> pattern (allowing for nested divs between center-stage and a)
+        const imgMatch = afterCenterStage.match(/<a[^>]*>[\s\S]*?<img[^>]*src="([^"]+)"/i);
+        if (imgMatch && imgMatch[1]) {
+          let imageUrl = imgMatch[1];
+          imageUrl = imageUrl.replace(/&amp;/g, '&');
+          if (!imageUrl.startsWith('http')) {
+            if (imageUrl.startsWith('//')) {
+              imageUrl = 'https:' + imageUrl;
+            } else if (imageUrl.startsWith('/')) {
+              imageUrl = 'https://www.gsmarena.com' + imageUrl;
+            } else {
+              imageUrl = 'https://www.gsmarena.com/' + imageUrl;
+            }
+          }
+          // Normalize to fdn2.gsmarena.com for images
+          if (imageUrl.includes('www.gsmarena.com') && (imageUrl.includes('/bigpic/') || imageUrl.includes('/vv/'))) {
+            imageUrl = imageUrl.replace('www.gsmarena.com', 'fdn2.gsmarena.com');
+          }
+          if (imageUrl.includes('bigpic') || imageUrl.includes('fdn') || imageUrl.includes('.jpg') || imageUrl.includes('.png')) {
+            logProgress(`Found image URL from center-stage: ${imageUrl}`, 'info');
+            return imageUrl;
+          }
+        }
+      }
+      
+      // Fallback patterns
       const imagePatterns = [
-        // Pattern 1: Standard specs-photo-main
+        // Pattern 1: center-stage > a > img (any center-stage)
+        /<div[^>]*class="[^"]*center-stage[^"]*"[^>]*>[\s\S]*?<a[^>]*>[\s\S]*?<img[^>]*src="([^"]+)"/i,
+        // Pattern 2: review-header > a > img
+        /<div[^>]*class="[^"]*review-header[^"]*"[^>]*>[\s\S]*?<a[^>]*>[\s\S]*?<img[^>]*src="([^"]+)"/i,
+        // Pattern 3: Standard specs-photo-main
         /<img[^>]*src="([^"]+)"[^>]*class="[^"]*specs-photo-main[^"]*"/i,
-        // Pattern 2: Alternative order
+        // Pattern 4: Alternative order
         /<img[^>]*class="[^"]*specs-photo-main[^"]*"[^>]*src="([^"]+)"/i,
-        // Pattern 3: With alt attribute
-        /<img[^>]*src="([^"]+)"[^>]*alt="[^"]*"[^>]*class="[^"]*specs-photo-main[^"]*"/i,
-        // Pattern 4: Inside specs-photo div
+        // Pattern 5: Inside specs-photo div
         /<div[^>]*class="[^"]*specs-photo[^"]*"[^>]*>[\s\S]*?<img[^>]*src="([^"]+)"/i,
-        // Pattern 5: Any img with specs-photo class
+        // Pattern 6: Any img with specs-photo class
         /<img[^>]*class="[^"]*specs-photo[^"]*"[^>]*src="([^"]+)"/i,
-        // Pattern 6: Direct src in specs-photo-main container
-        /class="specs-photo-main"[^>]*>[\s\S]*?<img[^>]*src="([^"]+)"/i,
         // Pattern 7: Look for bigpic URLs (GSM Arena CDN format)
         /src="([^"]*bigpic[^"]*)"/i,
         // Pattern 8: Look for fdn2.gsmarena.com URLs
