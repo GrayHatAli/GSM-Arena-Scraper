@@ -415,14 +415,20 @@ export class ScraperService {
       // CSS selector: #body > div > div.review-header > div > div.center-stage.light.nobg.specs-accent > div > a > img
       // We need to extract the exact src attribute from this specific img tag
       
-      // Find center-stage div with all required classes (light, nobg, specs-accent)
-      // The classes can be in any order in the class attribute
-      const centerStageRegex = /<div[^>]*class="([^"]*)"[^>]*>/gi;
+      logProgress(`Extracting image URL from device page: ${url}`, 'info');
+      
+      // Strategy: Find center-stage div with all required classes, then find img inside <a> tag
+      // CSS selector: div.center-stage.light.nobg.specs-accent > div > a > img
+      
+      // Find center-stage div with all required classes
+      // The classes can be in any order, separated by spaces
+      // We need to check each div individually to find the one with all required classes
+      const divRegex = /<div[^>]*class="([^"]*)"[^>]*>/gi;
       let centerStageMatch = null;
       let centerStageIndex = -1;
       let match;
       
-      while ((match = centerStageRegex.exec(html)) !== null) {
+      while ((match = divRegex.exec(html)) !== null) {
         const classes = match[1].toLowerCase();
         // Check if it has all required classes: center-stage, light, nobg, specs-accent
         if (classes.includes('center-stage') && 
@@ -431,29 +437,61 @@ export class ScraperService {
             classes.includes('specs-accent')) {
           centerStageMatch = match;
           centerStageIndex = match.index;
+          logProgress(`Found center-stage div with all classes at index ${centerStageIndex}`, 'info');
+          logProgress(`Classes: ${classes}`, 'debug');
           break;
         }
       }
       
       if (!centerStageMatch || centerStageIndex === -1) {
         logProgress('center-stage.light.nobg.specs-accent div not found', 'error');
+        // Debug: check if center-stage exists at all
+        if (html.includes('center-stage')) {
+          logProgress('center-stage found but missing required classes', 'warn');
+          // Try to find center-stage with any combination
+          const anyCenterStage = html.match(/<div[^>]*class="[^"]*center-stage[^"]*"[^>]*>/i);
+          if (anyCenterStage) {
+            const classes = anyCenterStage[0].match(/class="([^"]*)"/i);
+            logProgress(`Found center-stage but classes are: ${classes ? classes[1] : 'unknown'}`, 'debug');
+          }
+        } else {
+          logProgress('center-stage class not found in HTML at all', 'error');
+        }
         return null;
       }
       
-      // Search from center-stage div forward (next 2000 chars should be enough)
-      const searchArea = html.substring(centerStageIndex, centerStageIndex + 2000);
+      // Search in a larger area (5000 chars) to find the img tag
+      // The structure is: <div class="center-stage..."> <div> <a> <img src="...">
+      const searchArea = html.substring(centerStageIndex, Math.min(centerStageIndex + 5000, html.length));
       
-      // Find the pattern: <div>...<a>...<img src="...">
-      // We'll look for <a> tag first, then <img> inside it
-      const anchorPattern = /<a[^>]*>[\s\S]*?<img[^>]*src="([^"]+)"/i;
-      const imgMatch = searchArea.match(anchorPattern);
+      logProgress(`Searching in area of ${searchArea.length} chars after center-stage`, 'info');
+      
+      // Try multiple patterns to find the img tag
+      // Pattern 1: <a> followed by <img src="...">
+      let imgMatch = searchArea.match(/<a[^>]*>[\s\S]*?<img[^>]*src="([^"]+)"/i);
+      
+      if (!imgMatch || !imgMatch[1]) {
+        // Pattern 2: Any <img> tag in the search area (fallback)
+        imgMatch = searchArea.match(/<img[^>]*src="([^"]+)"/i);
+      }
       
       if (!imgMatch || !imgMatch[1]) {
         logProgress('Image tag with src not found in center-stage structure', 'error');
+        // Debug: try to find any img tag in the area
+        const anyImg = searchArea.match(/<img[^>]*/i);
+        if (anyImg) {
+          logProgress(`Found img tag but no src attribute: ${anyImg[0].substring(0, 200)}`, 'debug');
+        } else {
+          logProgress('No img tag found in search area at all', 'debug');
+          // Log a snippet for debugging
+          const snippet = searchArea.substring(0, 1500).replace(/\s+/g, ' ');
+          logProgress(`Search area snippet (first 1500 chars): ${snippet.substring(0, 800)}`, 'debug');
+        }
         return null;
       }
       
       let imageUrl = imgMatch[1];
+      logProgress(`Found image URL: ${imageUrl}`, 'info');
       
       // Clean up and normalize the URL
       imageUrl = imageUrl.replace(/&amp;/g, '&');
@@ -474,11 +512,12 @@ export class ScraperService {
         imageUrl = imageUrl.replace('www.gsmarena.com', 'fdn2.gsmarena.com');
       }
       
-      logProgress(`Found image URL from selector: ${imageUrl}`, 'info');
+      logProgress(`Final image URL: ${imageUrl}`, 'info');
       return imageUrl;
       
     } catch (error) {
       logProgress(`Error getting device image URL: ${error.message}`, 'error');
+      logProgress(`Error stack: ${error.stack}`, 'error');
       return null;
     }
   }
