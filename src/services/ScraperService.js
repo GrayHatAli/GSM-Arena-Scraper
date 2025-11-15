@@ -400,6 +400,43 @@ export class ScraperService {
   }
 
   /**
+   * Get device image URL (lightweight method, no full specifications)
+   * @param {string} deviceUrl - Device URL
+   * @returns {Promise<string|null>} - Image URL or null
+   */
+  async getDeviceImageUrl(deviceUrl) {
+    try {
+      const url = deviceUrl.startsWith('http') ? deviceUrl : this.baseUrl + '/' + deviceUrl;
+      // Shorter delay for image-only requests
+      await this.delay(500);
+      const response = await this.apiClient.get(url);
+      const html = response.data;
+      
+      // Try multiple patterns to extract image URL
+      const imagePatterns = [
+        /<img src="([^"]+)" alt="[^"]+" class="specs-photo-main"/,
+        /<img[^>]*class="specs-photo-main"[^>]*src="([^"]+)"/,
+        /<img[^>]*src="([^"]+)"[^>]*class="specs-photo-main"/,
+        /<img[^>]*src="([^"]+)"[^>]*alt="[^"]*"[^>]*class="[^"]*specs-photo[^"]*"/,
+        /<div[^>]*class="[^"]*specs-photo[^"]*"[^>]*>[\s\S]*?<img[^>]*src="([^"]+)"/i
+      ];
+      
+      for (const pattern of imagePatterns) {
+        const match = html.match(pattern);
+        if (match && match[1]) {
+          const imageUrl = match[1].startsWith('http') ? match[1] : this.baseUrl + '/' + match[1].replace(/^\/+/, '');
+          return imageUrl;
+        }
+      }
+      
+      return null;
+    } catch (error) {
+      logProgress(`Error getting device image URL: ${error.message}`, 'warn');
+      return null;
+    }
+  }
+
+  /**
    * Get device specifications
    * @param {Object} device - Device object with URL
    * @param {Object} options - Options including minYear filter
@@ -593,7 +630,7 @@ export class ScraperService {
         };
       }
       
-      // Convert devices to models with detailed specifications
+      // Convert devices to models (only basic info, no specifications)
       const models = [];
       const modelsPerBrand = options.modelsPerBrand || devices.length;
       const devicesToProcess = devices.slice(0, modelsPerBrand);
@@ -602,47 +639,43 @@ export class ScraperService {
       
       for (const device of devicesToProcess) {
         try {
-          logProgress(`  Getting details for: ${device.name}`, 'info');
+          logProgress(`  Processing device: ${device.name}`, 'info');
           
-          const deviceSpecs = await this.getDeviceSpecifications(device, options);
+          // Extract device_id from URL
+          const deviceId = this.extractDeviceIdFromUrl(device.url);
           
-          // Skip device if it was filtered out by minYear
-          if (deviceSpecs === null) {
-            logProgress(`  Skipping device ${device.name} due to minYear filter`, 'info');
-            continue;
-          }
+          // Get only image_url (lightweight request)
+          const imageUrl = await this.getDeviceImageUrl(device.url);
+          
+          // Extract year for release_date
+          const releaseDate = device.year ? `${device.year}-01-01` : null;
+          
+          // Extract series from device name (first word)
+          const series = device.name.split(' ')[0];
           
           models.push({
             brand_name: brand.name,
             model_name: device.name,
-            series: device.name.split(' ')[0],
-            ram_options: deviceSpecs.ram_options || [6, 8],
-            storage_options: deviceSpecs.storage_options || [128, 256],
-            color_options: deviceSpecs.color_options.length > 0 ? 
-              deviceSpecs.color_options :
-              ['Black', 'White'],
-            specifications: deviceSpecs.specifications || {},
-            release_date: device.year ? `${device.year}-01-01` : '2023-01-01',
-            image_url: deviceSpecs.image_url,
-            is_active: true
+            series: series,
+            release_date: releaseDate || '2023-01-01',
+            device_id: deviceId ? parseInt(deviceId) : null,
+            image_url: imageUrl
           });
           
           // Add delay between device processing
           await this.delay(CONFIG.DELAYS.between_requests || 1000);
         } catch (error) {
           logProgress(`  Error processing device ${device.name}: ${error.message}`, 'error');
-          // Add fallback model data
+          // Add fallback model data with minimal info
+          const deviceId = this.extractDeviceIdFromUrl(device.url);
+          const series = device.name.split(' ')[0];
           models.push({
             brand_name: brand.name,
             model_name: device.name,
-            series: device.name.split(' ')[0],
-            ram_options: [6, 8],
-            storage_options: [128, 256],
-            color_options: ['Black', 'White'],
-            specifications: {},
+            series: series,
             release_date: device.year ? `${device.year}-01-01` : '2023-01-01',
-            image_url: null,
-            is_active: true
+            device_id: deviceId ? parseInt(deviceId) : null,
+            image_url: null
           });
         }
       }
@@ -737,7 +770,8 @@ export class ScraperService {
     let match = url.match(/device-(\d+)\.php/);
     if (match) return match[1];
     
-    // Pattern 2: brand_model-12345.php
+    // Pattern 2: brand_model-12345.php (most common GSM Arena format)
+    // Examples: apple_iphone_16-13317.php, iphone_16-13317.php
     match = url.match(/-(\d+)\.php$/);
     if (match) return match[1];
     
@@ -747,11 +781,17 @@ export class ScraperService {
     if (lastSegment) {
       match = lastSegment.match(/-(\d+)\.php$/);
       if (match) return match[1];
+      
+      // Also try pattern with underscore: brand_model_12345.php
+      match = lastSegment.match(/_(\d+)\.php$/);
+      if (match) return match[1];
     }
     
-    // If no pattern matches, generate a hash from the URL
-    // This is a fallback to ensure we always have a deviceId
-    return Buffer.from(url).toString('base64').substring(0, 10).replace(/[^a-zA-Z0-9]/g, '');
+    // Pattern 4: Try to find any number before .php at the end
+    match = url.match(/(\d+)\.php$/);
+    if (match) return match[1];
+    
+    return null;
   }
 
   /**

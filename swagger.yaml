@@ -400,39 +400,20 @@ components:
           example: "apple"
         model_name:
           type: string
-          example: "iPhone 17 Pro Max"
+          example: "iPhone 16"
         series:
           type: string
           example: "iPhone"
-        ram_options:
-          type: array
-          items:
-            type: string
-          example: ["12"]
-        storage_options:
-          type: array
-          items:
-            type: string
-          example: ["256GB", "512GB", "1TB", "2TB"]
-        color_options:
-          type: array
-          items:
-            type: string
-          example: ["Silver", "Cosmic Orange", "Deep Blue"]
-        specifications:
-          type: object
-          additionalProperties:
-            type: string
         release_date:
           type: string
           format: date
-          example: "2025-01-01"
+          example: "2023-01-01"
+        device_id:
+          type: integer
+          example: 13317
         image_url:
           type: string
-          example: "https://www.gsmarena.com/img/phones/iphone_17_pro_max.jpg"
-        is_active:
-          type: boolean
-          example: true
+          example: "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-16.jpg"
 
     BrandResult:
       type: object
