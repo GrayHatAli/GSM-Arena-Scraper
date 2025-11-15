@@ -414,19 +414,72 @@ export class ScraperService {
       
       // Try multiple patterns to extract image URL
       const imagePatterns = [
-        /<img src="([^"]+)" alt="[^"]+" class="specs-photo-main"/,
-        /<img[^>]*class="specs-photo-main"[^>]*src="([^"]+)"/,
-        /<img[^>]*src="([^"]+)"[^>]*class="specs-photo-main"/,
-        /<img[^>]*src="([^"]+)"[^>]*alt="[^"]*"[^>]*class="[^"]*specs-photo[^"]*"/,
-        /<div[^>]*class="[^"]*specs-photo[^"]*"[^>]*>[\s\S]*?<img[^>]*src="([^"]+)"/i
+        // Pattern 1: Standard specs-photo-main
+        /<img[^>]*src="([^"]+)"[^>]*class="[^"]*specs-photo-main[^"]*"/i,
+        // Pattern 2: Alternative order
+        /<img[^>]*class="[^"]*specs-photo-main[^"]*"[^>]*src="([^"]+)"/i,
+        // Pattern 3: With alt attribute
+        /<img[^>]*src="([^"]+)"[^>]*alt="[^"]*"[^>]*class="[^"]*specs-photo-main[^"]*"/i,
+        // Pattern 4: Inside specs-photo div
+        /<div[^>]*class="[^"]*specs-photo[^"]*"[^>]*>[\s\S]*?<img[^>]*src="([^"]+)"/i,
+        // Pattern 5: Any img with specs-photo class
+        /<img[^>]*class="[^"]*specs-photo[^"]*"[^>]*src="([^"]+)"/i,
+        // Pattern 6: Direct src in specs-photo-main container
+        /class="specs-photo-main"[^>]*>[\s\S]*?<img[^>]*src="([^"]+)"/i,
+        // Pattern 7: Look for bigpic URLs (GSM Arena CDN format)
+        /src="([^"]*bigpic[^"]*)"/i,
+        // Pattern 8: Look for fdn2.gsmarena.com URLs
+        /src="(https?:\/\/[^"]*fdn[^"]*\.gsmarena\.com[^"]*)"/i
       ];
       
       for (const pattern of imagePatterns) {
         const match = html.match(pattern);
         if (match && match[1]) {
-          const imageUrl = match[1].startsWith('http') ? match[1] : this.baseUrl + '/' + match[1].replace(/^\/+/, '');
-          return imageUrl;
+          let imageUrl = match[1];
+          
+          // Clean up the URL
+          imageUrl = imageUrl.replace(/&amp;/g, '&');
+          
+          // If it's a relative URL, make it absolute
+          if (!imageUrl.startsWith('http')) {
+            // Handle different relative URL formats
+            if (imageUrl.startsWith('//')) {
+              imageUrl = 'https:' + imageUrl;
+            } else if (imageUrl.startsWith('/')) {
+              imageUrl = 'https://www.gsmarena.com' + imageUrl;
+            } else {
+              imageUrl = 'https://www.gsmarena.com/' + imageUrl;
+            }
+          }
+          
+          // Normalize the URL - GSM Arena uses fdn2.gsmarena.com for images
+          // Convert www.gsmarena.com to fdn2.gsmarena.com for image URLs
+          if (imageUrl.includes('www.gsmarena.com') && imageUrl.includes('/bigpic/')) {
+            imageUrl = imageUrl.replace('www.gsmarena.com', 'fdn2.gsmarena.com');
+          }
+          
+          // Ensure it's a valid image URL
+          if (imageUrl.includes('bigpic') || imageUrl.includes('fdn') || imageUrl.includes('.jpg') || imageUrl.includes('.png')) {
+            return imageUrl;
+          }
         }
+      }
+      
+      // Fallback: Try to construct URL from device URL
+      // Extract device name from URL and construct image URL
+      // Format: apple_iphone_16-13317.php -> apple-iphone-16
+      const deviceNameMatch = deviceUrl.match(/([^\/]+)\.php$/);
+      if (deviceNameMatch) {
+        let deviceSlug = deviceNameMatch[1];
+        // Remove device ID from the end (e.g., -13317)
+        deviceSlug = deviceSlug.replace(/-\d+$/, '');
+        // Replace underscores with dashes
+        deviceSlug = deviceSlug.replace(/_/g, '-');
+        // Convert to lowercase
+        deviceSlug = deviceSlug.toLowerCase();
+        const fallbackUrl = `https://fdn2.gsmarena.com/vv/bigpic/${deviceSlug}.jpg`;
+        logProgress(`Using fallback image URL: ${fallbackUrl}`, 'info');
+        return fallbackUrl;
       }
       
       return null;
@@ -644,6 +697,9 @@ export class ScraperService {
           // Extract device_id from URL
           const deviceId = this.extractDeviceIdFromUrl(device.url);
           
+          // Normalize device_url
+          const deviceUrl = device.url.startsWith('http') ? device.url : this.baseUrl + '/' + device.url.replace(/^\/+/, '');
+          
           // Get only image_url (lightweight request)
           const imageUrl = await this.getDeviceImageUrl(device.url);
           
@@ -659,6 +715,7 @@ export class ScraperService {
             series: series,
             release_date: releaseDate || '2023-01-01',
             device_id: deviceId ? parseInt(deviceId) : null,
+            device_url: deviceUrl,
             image_url: imageUrl
           });
           
@@ -668,6 +725,7 @@ export class ScraperService {
           logProgress(`  Error processing device ${device.name}: ${error.message}`, 'error');
           // Add fallback model data with minimal info
           const deviceId = this.extractDeviceIdFromUrl(device.url);
+          const deviceUrl = device.url.startsWith('http') ? device.url : this.baseUrl + '/' + device.url.replace(/^\/+/, '');
           const series = device.name.split(' ')[0];
           models.push({
             brand_name: brand.name,
@@ -675,6 +733,7 @@ export class ScraperService {
             series: series,
             release_date: device.year ? `${device.year}-01-01` : '2023-01-01',
             device_id: deviceId ? parseInt(deviceId) : null,
+            device_url: deviceUrl,
             image_url: null
           });
         }

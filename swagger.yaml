@@ -411,6 +411,9 @@ components:
         device_id:
           type: integer
           example: 13317
+        device_url:
+          type: string
+          example: "https://www.gsmarena.com/apple_iphone_16-13317.php"
         image_url:
           type: string
           example: "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-16.jpg"
