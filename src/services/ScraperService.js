@@ -468,11 +468,11 @@ export class ScraperService {
       
       // Try multiple patterns to find the img tag
       // Pattern 1: <a> followed by <img src="...">
-      let imgMatch = searchArea.match(/<a[^>]*>[\s\S]*?<img[^>]*src="([^"]+)"/i);
+      let imgMatch = searchArea.match(/<a[^>]*>[\s\S]*?<img[^>]*src\s*=\s*["']?([^"'\s>]+)["']?[^>]*>/i);
       
       if (!imgMatch || !imgMatch[1]) {
         // Pattern 2: Any <img> tag in the search area (fallback)
-        imgMatch = searchArea.match(/<img[^>]*src="([^"]+)"/i);
+        imgMatch = searchArea.match(/<img[^>]*src\s*=\s*["']?([^"'\s>]+)["']?[^>]*>/i);
       }
       
       if (!imgMatch || !imgMatch[1]) {
