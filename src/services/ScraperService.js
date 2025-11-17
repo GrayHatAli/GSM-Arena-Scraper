@@ -5,7 +5,11 @@
 
 import axios from 'axios';
 import { logProgress } from '../utils.js';
+import { getCache, setCache, DEFAULT_TTL_SECONDS } from '../utils/cache.js';
 import { CONFIG } from '../config/config.js';
+
+const CACHE_TTL_SECONDS = DEFAULT_TTL_SECONDS;
+const ALL_BRANDS_CACHE_KEY = 'brands:all:v1';
 
 export class ScraperService {
   constructor() {
@@ -58,6 +62,12 @@ export class ScraperService {
    */
   async getAllBrands() {
     try {
+      const cachedBrands = await getCache(ALL_BRANDS_CACHE_KEY);
+      if (cachedBrands) {
+        logProgress('Retrieved available brands from cache', 'success');
+        return cachedBrands;
+      }
+
       logProgress('Getting available brands...', 'info');
       
       const response = await this.apiClient.get('/makers.php3');
@@ -195,6 +205,7 @@ export class ScraperService {
       });
       
       logProgress(`Found ${brands.length} brands`, 'success');
+      await setCache(ALL_BRANDS_CACHE_KEY, brands, CACHE_TTL_SECONDS);
       return brands;
     } catch (error) {
       logProgress(`Error getting available brands: ${error.message}`, 'error');
@@ -211,19 +222,38 @@ export class ScraperService {
    */
   async searchDevicesByBrand(brandName, options = {}) {
     try {
+      const brandNameLower = brandName ? brandName.toLowerCase() : null;
       logProgress(`Searching for devices by brand: ${brandName}`, 'info');
+
+      const searchCacheKey = this.buildDeviceSearchCacheKey(brandNameLower, options);
+      const cachedDevices = await getCache(searchCacheKey);
+      if (cachedDevices) {
+        logProgress(`Cache hit for device search: ${brandName}`, 'success');
+        return cachedDevices;
+      }
       
       // Add random delay to avoid detection
       const randomDelay = Math.floor(Math.random() * 2000) + 1000;
       await this.delay(randomDelay);
       
       // Try multiple search approaches
-      const searchUrls = [
-        `/${brandName}-phones-48.php`,  // Direct brand page (most reliable)
-        `/${brandName}-phones-f-0-0-p1.php`,  // Alternative format
-        `/results.php3?sQuickSearch=yes&sName=${encodeURIComponent(brandName)}`,
-        `/results.php3?sQuickSearch=${encodeURIComponent(brandName)}`
-      ];
+      const searchUrls = [];
+
+      if (options.brandUrl) {
+        const brandUrl = options.brandUrl.startsWith('http')
+          ? options.brandUrl
+          : `${this.baseUrl}/${options.brandUrl.replace(/^\/+/, '')}`;
+        searchUrls.push(brandUrl.replace(this.baseUrl, '').replace(/^\/?/, '/'));
+      }
+
+      if (brandName) {
+        searchUrls.push(
+          `/${brandNameLower}-phones-48.php`,
+          `/${brandNameLower}-phones-f-0-0-p1.php`,
+          `/results.php3?sQuickSearch=yes&sName=${encodeURIComponent(brandName)}`,
+          `/results.php3?sQuickSearch=${encodeURIComponent(brandName)}`
+        );
+      }
       
       let devices = [];
       
@@ -354,6 +384,19 @@ export class ScraperService {
               if (isNonPhone) {
                 continue;
               }
+
+              if (brandNameLower) {
+                const urlLower = url.toLowerCase();
+                const brandMatchesUrl =
+                  urlLower.includes(`-${brandNameLower}-`) ||
+                  urlLower.includes(`_${brandNameLower}_`) ||
+                  urlLower.includes(`/${brandNameLower}`) ||
+                  urlLower.includes(`${brandNameLower}-phones`);
+                const brandMatchesName = nameLower.includes(brandNameLower);
+                if (!brandMatchesUrl && !brandMatchesName) {
+                  continue;
+                }
+              }
               
               tempDevices.push({
                 name,
@@ -392,6 +435,7 @@ export class ScraperService {
       }
       
       logProgress(`Found ${uniqueDevices.length} unique devices for brand ${brandName}`, 'success');
+      await setCache(searchCacheKey, uniqueDevices, CACHE_TTL_SECONDS);
       return uniqueDevices;
     } catch (error) {
       logProgress(`Error searching devices by brand: ${error.message}`, 'error');
@@ -691,6 +735,13 @@ export class ScraperService {
     try {
       logProgress(`Scraping brand: ${brand.name}`, 'info');
       
+      const brandCacheKey = this.buildBrandCacheKey(brand.name, options);
+      const cachedBrandData = await getCache(brandCacheKey);
+      if (cachedBrandData) {
+        logProgress(`Cache hit for brand ${brand.name}`, 'success');
+        return cachedBrandData;
+      }
+      
       // Merge excludeKeywords from options with CONFIG defaults (remove duplicates)
       const excludeKeywords = [
         ...new Set([
@@ -702,7 +753,8 @@ export class ScraperService {
       // Get devices for the brand
       const devices = await this.searchDevicesByBrand(brand.name, {
         minYear: options.minYear,
-        excludeKeywords: excludeKeywords
+        excludeKeywords: excludeKeywords,
+        brandUrl: brand.url
       });
       
       logProgress(`Found ${devices.length} devices for brand ${brand.name}`, 'info');
@@ -773,12 +825,15 @@ export class ScraperService {
         }
       }
       
-      return {
+      const brandData = {
         name: brand.name,
         logo_url: brand.logo_url || `${this.baseUrl}/img/logo_${brand.name}.png`,
         is_active: true,
         models: models
       };
+
+      await setCache(brandCacheKey, brandData, CACHE_TTL_SECONDS);
+      return brandData;
     } catch (error) {
       logProgress(`Error scraping brand ${brand.name}: ${error.message}`, 'error');
       return {
@@ -1023,6 +1078,22 @@ export class ScraperService {
       hasBrowser: false,
       timestamp: new Date().toISOString()
     };
+  }
+
+  buildBrandCacheKey(brandName, options = {}) {
+    const normalizedName = (brandName || 'unknown').toLowerCase();
+    const minYear = options.minYear ?? 'all';
+    const modelsPerBrand = options.modelsPerBrand ?? 'all';
+    const exclude = (options.excludeKeywords || []).slice().sort().join('|') || 'none';
+    return `brand:${normalizedName}:min:${minYear}:models:${modelsPerBrand}:exclude:${exclude}`;
+  }
+
+  buildDeviceSearchCacheKey(brandNameLower, options = {}) {
+    const name = brandNameLower || 'unknown';
+    const minYear = options.minYear ?? 'all';
+    const exclude = (options.excludeKeywords || []).slice().sort().join('|') || 'none';
+    const brandUrlToken = (options.brandUrl || '').toLowerCase();
+    return `devices:${name}:min:${minYear}:exclude:${exclude}:url:${brandUrlToken}`;
   }
 }
 

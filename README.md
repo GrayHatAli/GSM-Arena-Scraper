@@ -43,6 +43,17 @@ npm start
 # Server runs on http://localhost:3002
 ```
 
+## ⚡ Redis Caching
+
+Repeated brand/device requests are cached for 24 hours to keep latency low.
+
+- Set `REDIS_URL` in your environment (for example `redis://localhost:6379` or a managed Redis URL).
+- On the first request the scraper fetches the data from GSM Arena and stores:
+  - The normalized list of brands.
+  - Each brand response (respecting `minYear`, `modelsPerBrand`, `excludeKeywords`, etc.).
+- Subsequent requests with the same filters are served directly from Redis.
+- If Redis is unreachable or `REDIS_URL` is not set, the API gracefully falls back to live scraping.
+
 ## 🔌 API Endpoints
 
 ### Health & Status

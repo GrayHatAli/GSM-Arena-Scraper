@@ -1,0 +1,89 @@
+import { createClient } from 'redis';
+import { logProgress } from '../utils.js';
+
+const DEFAULT_TTL_SECONDS = 60 * 60 * 24; // 24 hours
+let redisClient = null;
+let redisConnectPromise = null;
+
+const getRedisUrl = () => process.env.REDIS_URL || process.env.VERCEL_REDIS_URL || null;
+
+async function getRedisClient() {
+  const redisUrl = getRedisUrl();
+  if (!redisUrl) {
+    return null;
+  }
+
+  if (redisClient?.isOpen) {
+    return redisClient;
+  }
+
+  if (!redisConnectPromise) {
+    redisClient = createClient({
+      url: redisUrl
+    });
+
+    redisClient.on('error', (err) => {
+      logProgress(`Redis error: ${err.message}`, 'error');
+    });
+
+    redisConnectPromise = redisClient.connect().catch((err) => {
+      logProgress(`Redis connection failed: ${err.message}`, 'error');
+      redisConnectPromise = null;
+      redisClient = null;
+      return null;
+    });
+  }
+
+  const client = await redisConnectPromise;
+  return client?.isOpen ? client : null;
+}
+
+export async function getCache(key) {
+  try {
+    const client = await getRedisClient();
+    if (!client) {
+      return null;
+    }
+
+    const data = await client.get(key);
+    if (!data) {
+      return null;
+    }
+
+    return JSON.parse(data);
+  } catch (error) {
+    logProgress(`Redis get error for key ${key}: ${error.message}`, 'error');
+    return null;
+  }
+}
+
+export async function setCache(key, value, ttlSeconds = DEFAULT_TTL_SECONDS) {
+  try {
+    const client = await getRedisClient();
+    if (!client) {
+      return;
+    }
+
+    await client.set(key, JSON.stringify(value), {
+      EX: ttlSeconds
+    });
+  } catch (error) {
+    logProgress(`Redis set error for key ${key}: ${error.message}`, 'error');
+  }
+}
+
+export async function deleteCache(key) {
+  try {
+    const client = await getRedisClient();
+    if (!client) {
+      return;
+    }
+
+    await client.del(key);
+  } catch (error) {
+    logProgress(`Redis delete error for key ${key}: ${error.message}`, 'error');
+  }
+}
+
+export { DEFAULT_TTL_SECONDS };
+
