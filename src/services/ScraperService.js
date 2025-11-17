@@ -799,13 +799,52 @@ export class ScraperService {
    */
   async scrapeBrands(brands, options = {}) {
     try {
-      // If brands array is empty, get all available brands
-      let brandsToScrape = brands;
+      let brandsToScrape = [];
+
       if (!brands || brands.length === 0) {
         logProgress('No brands specified, fetching all available brands...', 'info');
         const allBrands = await this.getAllBrands();
         brandsToScrape = allBrands;
         logProgress(`Found ${allBrands.length} brands to scrape`, 'info');
+      } else {
+        const rawBrands = Array.isArray(brands) ? brands : [brands];
+        const stringBrands = rawBrands.filter(brand => typeof brand === 'string');
+        let brandLookup = null;
+
+        if (stringBrands.length > 0) {
+          logProgress('Fetching available brands for lookup...', 'info');
+          const availableBrands = await this.getAllBrands();
+          brandLookup = new Map(
+            availableBrands.map(brand => [brand.name.toLowerCase(), brand])
+          );
+        }
+
+        for (const brand of rawBrands) {
+          if (typeof brand === 'string') {
+            const normalizedName = brand.toLowerCase();
+            const brandObj = brandLookup?.get(normalizedName);
+
+            if (!brandObj) {
+              logProgress(`Brand "${brand}" not found in available brands list. Skipping.`, 'warn');
+              continue;
+            }
+
+            brandsToScrape.push(brandObj);
+          } else if (brand && typeof brand === 'object') {
+            brandsToScrape.push(brand);
+          }
+        }
+
+        if (brandsToScrape.length === 0) {
+          logProgress('No valid brands found to scrape after lookup.', 'error');
+          return {
+            brands: [],
+            scraped_at: new Date().toISOString(),
+            total_brands: 0,
+            total_models: 0,
+            options
+          };
+        }
       }
       
       logProgress(`Starting to scrape ${brandsToScrape.length} brands`, 'info');
