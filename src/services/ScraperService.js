@@ -40,6 +40,46 @@ export class ScraperService {
   }
 
   /**
+   * Make HTTP request with retry logic and exponential backoff
+   * @param {Function} requestFn - Function that returns a promise for the HTTP request
+   * @param {number} maxRetries - Maximum number of retries (default: 3)
+   * @param {number} baseDelay - Base delay in milliseconds (default: 2000)
+   * @returns {Promise} - Request result
+   */
+  async makeRequestWithRetry(requestFn, maxRetries = 3, baseDelay = 2000) {
+    let lastError;
+    
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        if (attempt > 0) {
+          // Exponential backoff: 2s, 4s, 8s, etc.
+          const delay = baseDelay * Math.pow(2, attempt - 1);
+          logProgress(`Retry attempt ${attempt}/${maxRetries} after ${delay}ms delay`, 'warning');
+          await this.delay(delay);
+        }
+        
+        return await requestFn();
+      } catch (error) {
+        lastError = error;
+        
+        // Check if it's a rate limit error (429) or server error (5xx)
+        const isRetryable = error.response?.status === 429 || 
+                           (error.response?.status >= 500 && error.response?.status < 600) ||
+                           error.code === 'ECONNRESET' ||
+                           error.code === 'ETIMEDOUT';
+        
+        if (!isRetryable || attempt === maxRetries) {
+          throw error;
+        }
+        
+        logProgress(`Request failed (${error.response?.status || error.code}), will retry...`, 'warning');
+      }
+    }
+    
+    throw lastError;
+  }
+
+  /**
    * Extract year from "Announced" field
    * @param {string} announced - Announced field value
    * @returns {number|null} - Extracted year or null
@@ -232,8 +272,8 @@ export class ScraperService {
         return cachedDevices;
       }
       
-      // Add random delay to avoid detection
-      const randomDelay = Math.floor(Math.random() * 2000) + 1000;
+      // Add random delay to avoid detection (increased to avoid rate limiting)
+      const randomDelay = Math.floor(Math.random() * 3000) + 2000; // 2-5 seconds
       await this.delay(randomDelay);
       
       // Try multiple search approaches
@@ -260,7 +300,12 @@ export class ScraperService {
       for (const searchUrl of searchUrls) {
         try {
           logProgress(`Trying search URL: ${searchUrl}`, 'info');
-          const response = await this.apiClient.get(searchUrl);
+          // Use retry logic for rate limit errors
+          const response = await this.makeRequestWithRetry(
+            () => this.apiClient.get(searchUrl),
+            3, // max retries
+            3000 // base delay for retries (3s, 6s, 12s)
+          );
           const html = response.data;
           
           // Log the response for debugging
@@ -417,8 +462,13 @@ export class ScraperService {
             break;
           }
           
+          // Add delay before trying next URL to avoid rate limiting
+          await this.delay(1000);
+          
         } catch (urlError) {
           logProgress(`Error with search URL ${searchUrl}: ${urlError.message}`, 'warn');
+          // Add delay even on error before trying next URL
+          await this.delay(1000);
           continue;
         }
       }
@@ -451,9 +501,15 @@ export class ScraperService {
   async getDeviceImageUrl(deviceUrl) {
     try {
       const url = deviceUrl.startsWith('http') ? deviceUrl : this.baseUrl + '/' + deviceUrl;
-      // Shorter delay for image-only requests
-      await this.delay(500);
-      const response = await this.apiClient.get(url);
+      // Increased delay to avoid rate limiting
+      await this.delay(2000);
+      
+      // Use retry logic for rate limit errors
+      const response = await this.makeRequestWithRetry(
+        () => this.apiClient.get(url),
+        3, // max retries
+        3000 // base delay for retries (3s, 6s, 12s)
+      );
       const html = response.data;
       
       // CSS selector: #body > div > div.review-header > div > div.center-stage.light.nobg.specs-accent > div > a > img
@@ -574,9 +630,15 @@ export class ScraperService {
   async getDeviceAnnounced(deviceUrl) {
     try {
       const url = deviceUrl.startsWith('http') ? deviceUrl : this.baseUrl + '/' + deviceUrl;
-      // Shorter delay for announced-only requests
-      await this.delay(300);
-      const response = await this.apiClient.get(url);
+      // Increased delay to avoid rate limiting
+      await this.delay(2000);
+      
+      // Use retry logic for rate limit errors
+      const response = await this.makeRequestWithRetry(
+        () => this.apiClient.get(url),
+        3, // max retries
+        3000 // base delay for retries (3s, 6s, 12s)
+      );
       const html = response.data;
       
       // Look for "Announced" field in the specifications table
@@ -855,11 +917,12 @@ export class ScraperService {
           // Normalize device_url
           const deviceUrl = device.url.startsWith('http') ? device.url : this.baseUrl + '/' + device.url.replace(/^\/+/, '');
           
-          // Get image_url and announced date in parallel (lightweight requests)
-          const [imageUrl, announcedDate] = await Promise.all([
-            this.getDeviceImageUrl(device.url),
-            this.getDeviceAnnounced(device.url)
-          ]);
+          // Get image_url and announced date sequentially to avoid rate limiting
+          // Each request already has retry logic and delays built in
+          const imageUrl = await this.getDeviceImageUrl(device.url);
+          // Add delay between requests to avoid rate limiting
+          await this.delay(1000);
+          const announcedDate = await this.getDeviceAnnounced(device.url);
           
           // Use announced date if available, otherwise fall back to device.year
           const releaseDate = announcedDate || (device.year ? String(device.year) : null);
@@ -877,8 +940,8 @@ export class ScraperService {
             image_url: imageUrl
           });
           
-          // Add delay between device processing
-          await this.delay(CONFIG.DELAYS.between_requests || 1000);
+          // Add delay between device processing (increased to avoid rate limiting)
+          await this.delay(CONFIG.DELAYS.between_requests || 3000);
         } catch (error) {
           logProgress(`  Error processing device ${device.name}: ${error.message}`, 'error');
           // Add fallback model data with minimal info
