@@ -534,7 +534,7 @@ export class ScraperService {
               deviceSpecs.color_options :
               ['Black', 'White'],
             specifications: deviceSpecs.specifications || {},
-            release_date: device.year ? `${device.year}-01-01` : '2023-01-01',
+            release_date: device.year ? String(device.year) : null,
             image_url: deviceSpecs.image_url,
             is_active: true
           });
@@ -553,7 +553,7 @@ export class ScraperService {
             storage_options: [128, 256],
             color_options: ['Black', 'White'],
             specifications: {},
-            release_date: device.year ? `${device.year}-01-01` : '2023-01-01',
+            release_date: device.year ? String(device.year) : null,
             image_url: null,
             is_active: true
           });

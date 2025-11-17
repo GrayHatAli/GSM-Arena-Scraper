@@ -259,7 +259,7 @@ class GSMArenaScraper {
         storage_options: modelDetails.storage_options,
         color_options: modelDetails.color_options,
         specifications: modelDetails.specifications,
-        release_date: model.year ? `${model.year}-01-01` : '2023-01-01',
+        release_date: model.year ? String(model.year) : null,
         image_url: modelDetails.image_url,
         is_active: true
       });

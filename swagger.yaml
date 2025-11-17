@@ -406,8 +406,8 @@ components:
           example: "iPhone"
         release_date:
           type: string
-          format: date
-          example: "2023-01-01"
+          description: "Release year (e.g., '2023') or full date if available. Can be null if unknown."
+          example: "2023"
         device_id:
           type: integer
           example: 13317

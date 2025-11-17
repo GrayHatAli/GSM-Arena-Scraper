@@ -789,8 +789,8 @@ export class ScraperService {
           // Get only image_url (lightweight request)
           const imageUrl = await this.getDeviceImageUrl(device.url);
           
-          // Extract year for release_date
-          const releaseDate = device.year ? `${device.year}-01-01` : null;
+          // Extract year for release_date (only year if full date not available)
+          const releaseDate = device.year ? String(device.year) : null;
           
           // Extract series from device name (first word)
           const series = device.name.split(' ')[0];
@@ -799,7 +799,7 @@ export class ScraperService {
             brand_name: brand.name,
             model_name: device.name,
             series: series,
-            release_date: releaseDate || '2023-01-01',
+            release_date: releaseDate || null,
             device_id: deviceId ? parseInt(deviceId) : null,
             device_url: deviceUrl,
             image_url: imageUrl
@@ -817,7 +817,7 @@ export class ScraperService {
             brand_name: brand.name,
             model_name: device.name,
             series: series,
-            release_date: device.year ? `${device.year}-01-01` : '2023-01-01',
+            release_date: device.year ? String(device.year) : null,
             device_id: deviceId ? parseInt(deviceId) : null,
             device_url: deviceUrl,
             image_url: null
