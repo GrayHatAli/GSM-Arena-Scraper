@@ -50,7 +50,17 @@ export async function getCache(key) {
       return null;
     }
 
-    return JSON.parse(data);
+    const parsed = JSON.parse(data);
+    
+    // If data has cached_at timestamp, return it along with the data
+    if (parsed && typeof parsed === 'object' && parsed.cached_at) {
+      return {
+        data: parsed.data || parsed,
+        cached_at: parsed.cached_at
+      };
+    }
+    
+    return parsed;
   } catch (error) {
     logProgress(`Redis get error for key ${key}: ${error.message}`, 'error');
     return null;
@@ -64,7 +74,13 @@ export async function setCache(key, value, ttlSeconds = DEFAULT_TTL_SECONDS) {
       return;
     }
 
-    await client.set(key, JSON.stringify(value), {
+    // Wrap value with cached_at timestamp
+    const cacheValue = {
+      data: value,
+      cached_at: new Date().toISOString()
+    };
+
+    await client.set(key, JSON.stringify(cacheValue), {
       EX: ttlSeconds
     });
   } catch (error) {

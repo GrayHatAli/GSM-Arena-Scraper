@@ -797,10 +797,18 @@ export class ScraperService {
       logProgress(`Scraping brand: ${brand.name}`, 'info');
       
       const brandCacheKey = this.buildBrandCacheKey(brand.name, options);
-      const cachedBrandData = await getCache(brandCacheKey);
-      if (cachedBrandData) {
+      const cachedResult = await getCache(brandCacheKey);
+      if (cachedResult) {
         logProgress(`Cache hit for brand ${brand.name}`, 'success');
-        return cachedBrandData;
+        // Return brand data with cache metadata
+        const brandData = cachedResult.data || cachedResult;
+        return {
+          ...brandData,
+          _cache_metadata: {
+            cached: true,
+            cached_at: cachedResult.cached_at
+          }
+        };
       }
       
       // Merge excludeKeywords from options with CONFIG defaults (remove duplicates)
@@ -965,6 +973,8 @@ export class ScraperService {
       logProgress(`Starting to scrape ${brandsToScrape.length} brands`, 'info');
       
       const results = [];
+      let allCached = true;
+      let earliestCachedAt = null;
       
       for (const brand of brandsToScrape) {
         let brandObj;
@@ -983,6 +993,24 @@ export class ScraperService {
         logProgress(`Processing brand: ${brandObj.name}`, 'info');
         
         const brandData = await this.scrapeBrand(brandObj, options);
+        
+        // Extract cache metadata if present
+        const cacheMetadata = brandData._cache_metadata;
+        if (cacheMetadata) {
+          if (cacheMetadata.cached) {
+            // Track earliest cached_at timestamp
+            if (!earliestCachedAt || new Date(cacheMetadata.cached_at) < new Date(earliestCachedAt)) {
+              earliestCachedAt = cacheMetadata.cached_at;
+            }
+          } else {
+            allCached = false;
+          }
+          // Remove metadata from brand data before adding to results
+          delete brandData._cache_metadata;
+        } else {
+          allCached = false;
+        }
+        
         results.push(brandData);
         
         // Add delay between brand scraping
@@ -990,7 +1018,9 @@ export class ScraperService {
       }
       
       return {
-        brands: results
+        brands: results,
+        cached: allCached,
+        cached_at: allCached ? earliestCachedAt : null
       };
     } catch (error) {
       logProgress(`Error in scrapeBrands: ${error.message}`, 'error');

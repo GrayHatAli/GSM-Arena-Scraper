@@ -459,6 +459,16 @@ components:
                 type: array
                 items:
                   $ref: '#/components/schemas/Model'
+        cached:
+          type: boolean
+          description: "Indicates if the data was retrieved from cache"
+          example: true
+        cached_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: "Timestamp when the data was cached (only present if cached is true)"
+          example: "2025-11-17T15:30:00.000Z"
 
     TestResult:
       type: object
