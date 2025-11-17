@@ -437,15 +437,6 @@ components:
               type: array
               items:
                 $ref: '#/components/schemas/Model'
-        scraped_at:
-          type: string
-          format: date-time
-          example: "2025-10-25T15:30:00.000Z"
-        total_models:
-          type: integer
-          example: 5
-        options:
-          $ref: '#/components/schemas/ScrapingOptions'
 
     ScrapingResult:
       type: object
@@ -468,31 +459,12 @@ components:
                 type: array
                 items:
                   $ref: '#/components/schemas/Model'
-        scraped_at:
-          type: string
-          format: date-time
-          example: "2025-10-25T15:30:00.000Z"
-        total_brands:
-          type: integer
-          example: 1
-        total_models:
-          type: integer
-          example: 5
-        options:
-          $ref: '#/components/schemas/ScrapingOptions'
 
     TestResult:
       type: object
       properties:
         brand:
           $ref: '#/components/schemas/BrandResult'
-        scraped_at:
-          type: string
-          format: date-time
-          example: "2025-10-25T15:30:00.000Z"
-        total_models:
-          type: integer
-          example: 3
         test_mode:
           type: boolean
           example: true

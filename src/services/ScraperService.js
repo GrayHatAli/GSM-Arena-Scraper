@@ -893,11 +893,7 @@ export class ScraperService {
         if (brandsToScrape.length === 0) {
           logProgress('No valid brands found to scrape after lookup.', 'error');
           return {
-            brands: [],
-            scraped_at: new Date().toISOString(),
-            total_brands: 0,
-            total_models: 0,
-            options
+            brands: []
           };
         }
       }
@@ -905,7 +901,6 @@ export class ScraperService {
       logProgress(`Starting to scrape ${brandsToScrape.length} brands`, 'info');
       
       const results = [];
-      let totalModels = 0;
       
       for (const brand of brandsToScrape) {
         let brandObj;
@@ -925,18 +920,13 @@ export class ScraperService {
         
         const brandData = await this.scrapeBrand(brandObj, options);
         results.push(brandData);
-        totalModels += brandData.models ? brandData.models.length : 0;
         
         // Add delay between brand scraping
         await this.delay(CONFIG.DELAYS.between_brands || 3000);
       }
       
       return {
-        brands: results,
-        scraped_at: new Date().toISOString(),
-        total_brands: results.length,
-        total_models: totalModels,
-        options: options
+        brands: results
       };
     } catch (error) {
       logProgress(`Error in scrapeBrands: ${error.message}`, 'error');

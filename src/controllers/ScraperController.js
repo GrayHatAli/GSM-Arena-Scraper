@@ -18,8 +18,11 @@ export class ScraperController {
     try {
       const result = await this.scraperService.scrapeBrands(brands, options);
       
+      // Calculate total models from brands array
+      const totalModels = result.brands.reduce((total, brand) => total + (brand.models?.length || 0), 0);
+      
       // Return success even if no models found (this might be valid)
-      const message = result.total_models > 0 
+      const message = totalModels > 0 
         ? 'Brand scraping completed successfully' 
         : 'Brand scraping completed but no models found for the specified filters';
       
