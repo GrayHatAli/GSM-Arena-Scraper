@@ -858,28 +858,39 @@ export class ScraperService {
     try {
       logProgress(`Scraping brand: ${brand.name}`, 'info');
       
-      const brandCacheKey = this.buildBrandCacheKey(brand.name, options);
-      const cachedResult = await getCache(brandCacheKey);
-      if (cachedResult) {
-        logProgress(`Cache hit for brand ${brand.name}`, 'success');
-        // Return brand data with cache metadata
-        const brandData = cachedResult.data || cachedResult;
-        return {
-          ...brandData,
-          _cache_metadata: {
-            cached: true,
-            cached_at: cachedResult.cached_at
-          }
-        };
-      }
-      
       // Merge excludeKeywords from options with CONFIG defaults (remove duplicates)
+      // This must be done BEFORE building cache key to ensure consistency
       const excludeKeywords = [
         ...new Set([
           ...(CONFIG.EXCLUDE_KEYWORDS || []),
           ...(options.excludeKeywords || [])
         ])
       ];
+      
+      // Build cache key with merged excludeKeywords
+      const cacheOptions = {
+        ...options,
+        excludeKeywords: excludeKeywords
+      };
+      const brandCacheKey = this.buildBrandCacheKey(brand.name, cacheOptions);
+      logProgress(`Checking cache for key: ${brandCacheKey}`, 'info');
+      const cachedResult = await getCache(brandCacheKey);
+      if (cachedResult) {
+        logProgress(`Cache hit for brand ${brand.name}`, 'success');
+        // Return brand data with cache metadata
+        // Handle both new format (with data/cached_at) and old format (direct data)
+        const brandData = cachedResult.data || cachedResult;
+        const cachedAt = cachedResult.cached_at || null;
+        
+        return {
+          ...brandData,
+          _cache_metadata: {
+            cached: true,
+            cached_at: cachedAt
+          }
+        };
+      }
+      logProgress(`Cache miss for brand ${brand.name}`, 'info');
       
       // Get devices for the brand
       const devices = await this.searchDevicesByBrand(brand.name, {

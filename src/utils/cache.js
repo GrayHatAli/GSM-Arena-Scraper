@@ -42,15 +42,18 @@ export async function getCache(key) {
   try {
     const client = await getRedisClient();
     if (!client) {
+      logProgress(`Redis client not available for key: ${key}`, 'warn');
       return null;
     }
 
     const data = await client.get(key);
     if (!data) {
+      logProgress(`Cache miss for key: ${key}`, 'info');
       return null;
     }
 
     const parsed = JSON.parse(data);
+    logProgress(`Cache hit for key: ${key}`, 'success');
     
     // If data has cached_at timestamp, return it along with the data
     if (parsed && typeof parsed === 'object' && parsed.cached_at) {
@@ -60,6 +63,7 @@ export async function getCache(key) {
       };
     }
     
+    // Handle old format (data without cached_at wrapper)
     return parsed;
   } catch (error) {
     logProgress(`Redis get error for key ${key}: ${error.message}`, 'error');
@@ -71,6 +75,7 @@ export async function setCache(key, value, ttlSeconds = DEFAULT_TTL_SECONDS) {
   try {
     const client = await getRedisClient();
     if (!client) {
+      logProgress(`Redis client not available, skipping cache set for key: ${key}`, 'warn');
       return;
     }
 
@@ -83,6 +88,7 @@ export async function setCache(key, value, ttlSeconds = DEFAULT_TTL_SECONDS) {
     await client.set(key, JSON.stringify(cacheValue), {
       EX: ttlSeconds
     });
+    logProgress(`Cache set for key: ${key} (TTL: ${ttlSeconds}s)`, 'success');
   } catch (error) {
     logProgress(`Redis set error for key ${key}: ${error.message}`, 'error');
   }
