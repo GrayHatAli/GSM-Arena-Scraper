@@ -566,6 +566,67 @@ export class ScraperService {
     }
   }
 
+  /**
+   * Get device announced date (lightweight method)
+   * @param {string} deviceUrl - Device URL
+   * @returns {Promise<string|null>} - Announced date/year or null
+   */
+  async getDeviceAnnounced(deviceUrl) {
+    try {
+      const url = deviceUrl.startsWith('http') ? deviceUrl : this.baseUrl + '/' + deviceUrl;
+      // Shorter delay for announced-only requests
+      await this.delay(300);
+      const response = await this.apiClient.get(url);
+      const html = response.data;
+      
+      // Look for "Announced" field in the specifications table
+      // GSM Arena uses various patterns for the specifications table
+      const announcedPatterns = [
+        // Pattern 1: Standard table row with class="ttl" and class="nfo"
+        /<td[^>]*class="ttl"[^>]*>Announced<\/td>\s*<td[^>]*class="nfo"[^>]*>([^<]+)<\/td>/i,
+        // Pattern 2: Table row without classes
+        /<td[^>]*>Announced<\/td>\s*<td[^>]*>([^<]+)<\/td>/i,
+        // Pattern 3: Table header and data
+        /<th[^>]*>Announced<\/th>\s*<td[^>]*>([^<]+)<\/td>/i,
+        // Pattern 4: More flexible pattern
+        /<tr[^>]*>[\s\S]*?<td[^>]*>Announced<\/td>[\s\S]*?<td[^>]*>([^<]+)<\/td>[\s\S]*?<\/tr>/i,
+        // Pattern 5: Simple text pattern
+        /Announced[:\s]+([^<\n]+)/i
+      ];
+      
+      for (const pattern of announcedPatterns) {
+        const match = html.match(pattern);
+        if (match && match[1]) {
+          let announced = match[1].trim();
+          
+          // Clean up HTML entities and extra whitespace
+          announced = announced.replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+          
+          // Remove any HTML tags that might be in the value
+          announced = announced.replace(/<[^>]+>/g, '').trim();
+          
+          if (announced && announced.length > 0) {
+            logProgress(`Found announced date: ${announced}`, 'info');
+            
+            // Extract year from announced date
+            const year = this.extractYearFromAnnounced(announced);
+            if (year) {
+              return String(year);
+            }
+            
+            // If no year found, return the full announced string (might be just a year)
+            return announced;
+          }
+        }
+      }
+      
+      logProgress('Announced field not found in device page', 'warn');
+      return null;
+    } catch (error) {
+      logProgress(`Error getting device announced date: ${error.message}`, 'warn');
+      return null;
+    }
+  }
 
   /**
    * Get device specifications
@@ -786,11 +847,14 @@ export class ScraperService {
           // Normalize device_url
           const deviceUrl = device.url.startsWith('http') ? device.url : this.baseUrl + '/' + device.url.replace(/^\/+/, '');
           
-          // Get only image_url (lightweight request)
-          const imageUrl = await this.getDeviceImageUrl(device.url);
+          // Get image_url and announced date in parallel (lightweight requests)
+          const [imageUrl, announcedDate] = await Promise.all([
+            this.getDeviceImageUrl(device.url),
+            this.getDeviceAnnounced(device.url)
+          ]);
           
-          // Extract year for release_date (only year if full date not available)
-          const releaseDate = device.year ? String(device.year) : null;
+          // Use announced date if available, otherwise fall back to device.year
+          const releaseDate = announcedDate || (device.year ? String(device.year) : null);
           
           // Extract series from device name (first word)
           const series = device.name.split(' ')[0];
