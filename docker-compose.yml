@@ -1,6 +1,18 @@
 version: '3.8'
 
 services:
+  redis:
+    image: redis:7.2-alpine
+    container_name: gsm-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    volumes:
+      - redis-data:/data
+    networks:
+      - scraper-network
+
   gsm-scraper:
     build: .
     ports:
@@ -8,7 +20,10 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3002
+      - REDIS_URL=redis://redis:6379
     restart: unless-stopped
+    depends_on:
+      - redis
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
       interval: 30s
@@ -23,3 +38,6 @@ services:
 networks:
   scraper-network:
     driver: bridge
+
+volumes:
+  redis-data:
