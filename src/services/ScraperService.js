@@ -403,8 +403,12 @@ export class ScraperService {
               const nameLower = name.toLowerCase();
               const nonPhoneKeywords = [
                 'ipad',
+                'pad',
+                'matepad',
                 'watch',
+                'band',
                 'airpods',
+                'buds',
                 'mac',
                 'macbook',
                 'imac',
