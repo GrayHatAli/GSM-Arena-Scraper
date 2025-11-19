@@ -916,7 +916,9 @@ export class ScraperService {
       
       // Convert devices to models (only basic info, no specifications)
       const models = [];
-      const modelsPerBrand = options.modelsPerBrand || devices.length;
+      // If modelsPerBrand is not specified, use devices.length (scrape all)
+      // This could be a large number for brands with many models
+      const modelsPerBrand = options.modelsPerBrand !== undefined ? options.modelsPerBrand : devices.length;
       const devicesToProcess = devices.slice(0, modelsPerBrand);
       
       logProgress(`Processing ${devicesToProcess.length} devices (limited by modelsPerBrand: ${modelsPerBrand})`, 'info');
@@ -1238,7 +1240,8 @@ export class ScraperService {
   buildBrandCacheKey(brandName, options = {}) {
     const normalizedName = (brandName || 'unknown').toLowerCase();
     const minYear = options.minYear ?? 'all';
-    const modelsPerBrand = options.modelsPerBrand ?? 'all';
+    // Use 'all' for cache key if modelsPerBrand is not specified (to match actual behavior)
+    const modelsPerBrand = options.modelsPerBrand !== undefined ? options.modelsPerBrand : 'all';
     const exclude = (options.excludeKeywords || []).slice().sort().join('|') || 'none';
     return `brand:${normalizedName}:min:${minYear}:models:${modelsPerBrand}:exclude:${exclude}`;
   }
