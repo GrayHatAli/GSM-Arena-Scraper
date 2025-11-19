@@ -395,9 +395,6 @@ components:
     Model:
       type: object
       properties:
-        brand_name:
-          type: string
-          example: "apple"
         model_name:
           type: string
           example: "iPhone 16"

@@ -524,7 +524,6 @@ export class ScraperService {
           const deviceSpecs = await this.getDeviceSpecifications(device);
           
           models.push({
-            brand_name: brand.name,
             model_name: device.name,
             persian_name: device.persian_name || device.name,
             series: device.name.split(' ')[0],
@@ -545,7 +544,6 @@ export class ScraperService {
           logProgress(`  Error processing device ${device.name}: ${error.message}`, 'error');
           // Add fallback model data
           models.push({
-            brand_name: brand.name,
             model_name: device.name,
             persian_name: device.persian_name || device.name,
             series: device.name.split(' ')[0],

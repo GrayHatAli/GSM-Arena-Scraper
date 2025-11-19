@@ -942,7 +942,6 @@ export class ScraperService {
           const series = device.name.split(' ')[0];
           
           models.push({
-            brand_name: brand.name,
             model_name: device.name,
             series: series,
             release_date: releaseDate || null,
@@ -960,7 +959,6 @@ export class ScraperService {
           const deviceUrl = device.url.startsWith('http') ? device.url : this.baseUrl + '/' + device.url.replace(/^\/+/, '');
           const series = device.name.split(' ')[0];
           models.push({
-            brand_name: brand.name,
             model_name: device.name,
             series: series,
             release_date: device.year ? String(device.year) : null,

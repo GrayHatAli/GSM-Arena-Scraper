@@ -251,7 +251,6 @@ class GSMArenaScraper {
       const modelDetails = await this.getModelDetails(model);
       
       brandData.models.push({
-        brand_name: brand.name,
         model_name: model.name,
         persian_name: model.persian_name,
         series: model.name.split(' ')[0],
