@@ -404,6 +404,7 @@ export class ScraperService {
               const nonPhoneKeywords = [
                 'ipad',
                 'pad',
+                'tab',
                 'matepad',
                 'watch',
                 'band',

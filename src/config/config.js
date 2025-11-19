@@ -56,7 +56,7 @@ export const CONFIG = {
 
   // Device filters (exclude these from results)
   EXCLUDE_KEYWORDS: [
-    'ipad', 'pad', 'tablet', 'matepad', 'watch', 'buds', 'airpods', 'band', 'smartwatch'
+    'ipad', 'pad', 'tab', 'tablet', 'matepad', 'watch', 'buds', 'airpods', 'band', 'smartwatch'
   ],
 
   // API Configuration
