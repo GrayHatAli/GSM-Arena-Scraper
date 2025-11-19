@@ -854,41 +854,7 @@ export class ScraperService {
   }
 
   /**
-   * Filter models based on minYear and excludeKeywords
-   * @param {Array} models - Array of models
-   * @param {number|null} minYear - Minimum year filter
-   * @param {Array} excludeKeywords - Keywords to exclude
-   * @returns {Array} - Filtered models
-   */
-  filterModels(models, minYear, excludeKeywords) {
-    let filtered = models;
-    
-    // Filter by minYear
-    if (minYear) {
-      filtered = filtered.filter(model => {
-        if (!model.release_date) return false;
-        const year = parseInt(model.release_date);
-        return !isNaN(year) && year >= minYear;
-      });
-    }
-    
-    // Filter by excludeKeywords
-    if (excludeKeywords && excludeKeywords.length > 0) {
-      filtered = filtered.filter(model => {
-        const nameLower = (model.model_name || '').toLowerCase();
-        return !excludeKeywords.some(keyword => 
-          nameLower.includes(keyword.toLowerCase())
-        );
-      });
-    }
-    
-    return filtered;
-  }
-
-  /**
-   * Scrape a specific brand with smart caching
-   * Models are cached per brand (independent of filters)
-   * On subsequent requests, cached models are filtered and only new models are scraped
+   * Scrape a specific brand
    * @param {Object} brand - Brand object
    * @param {Object} options - Scraping options
    * @returns {Promise<Object>} - Brand data with models
@@ -898,6 +864,7 @@ export class ScraperService {
       logProgress(`Scraping brand: ${brand.name}`, 'info');
       
       // Merge excludeKeywords from options with CONFIG defaults (remove duplicates)
+      // This must be done BEFORE building cache key to ensure consistency
       const excludeKeywords = [
         ...new Set([
           ...(CONFIG.EXCLUDE_KEYWORDS || []),
@@ -905,103 +872,54 @@ export class ScraperService {
         ])
       ];
       
-      // Cache key for brand models (independent of filters)
-      const brandModelsCacheKey = `brand:models:${brand.name.toLowerCase()}`;
-      
-      // Get cached models for this brand
-      logProgress(`Checking cache for brand models: ${brandModelsCacheKey}`, 'info');
-      const cachedResult = await getCache(brandModelsCacheKey);
-      let cachedModels = [];
-      
+      // Build cache key with merged excludeKeywords and all parameters
+      const cacheOptions = {
+        ...options,
+        excludeKeywords: excludeKeywords
+      };
+      const brandCacheKey = this.buildBrandCacheKey(brand.name, cacheOptions);
+      logProgress(`Checking cache for key: ${brandCacheKey}`, 'info');
+      const cachedResult = await getCache(brandCacheKey);
       if (cachedResult) {
-        logProgress(`Cache result received, type: ${typeof cachedResult}, keys: ${cachedResult ? Object.keys(cachedResult).join(', ') : 'null'}`, 'info');
-        
+        logProgress(`Cache hit for brand ${brand.name}`, 'success');
+        // Return brand data with cache metadata
         // Handle both new format (with data/cached_at) and old format (direct data)
-        let cachedData;
-        if (cachedResult && typeof cachedResult === 'object' && 'data' in cachedResult) {
-          // New format: { data: {...}, cached_at: "..." }
-          cachedData = cachedResult.data;
-          logProgress(`Using new cache format (with data wrapper), cachedData type: ${typeof cachedData}`, 'info');
-        } else {
-          // Old format: direct data or { name: "...", models: [...] }
-          cachedData = cachedResult;
-          logProgress(`Using old cache format (direct data), cachedData type: ${typeof cachedData}`, 'info');
-        }
+        const brandData = cachedResult.data || cachedResult;
+        const cachedAt = cachedResult.cached_at || null;
         
-        // Extract models from cached data
-        if (Array.isArray(cachedData)) {
-          // If cached data is directly an array of models
-          cachedModels = cachedData;
-          logProgress(`Cached data is array of models: ${cachedModels.length}`, 'info');
-        } else if (cachedData && typeof cachedData === 'object' && Array.isArray(cachedData.models)) {
-          // If cached data has models property
-          cachedModels = cachedData.models;
-          logProgress(`Cached data has models property: ${cachedModels.length}`, 'info');
-        } else {
-          logProgress(`Cached data structure unexpected. Type: ${typeof cachedData}, IsArray: ${Array.isArray(cachedData)}, Has models: ${cachedData && cachedData.models ? 'yes' : 'no'}`, 'warn');
-          if (cachedData && typeof cachedData === 'object') {
-            logProgress(`Cached data keys: ${Object.keys(cachedData).join(', ')}`, 'warn');
+        return {
+          ...brandData,
+          _cache_metadata: {
+            cached: true,
+            cached_at: cachedAt
           }
-          cachedModels = [];
-        }
-        
-        logProgress(`Final cached models count: ${cachedModels.length} for brand ${brand.name}`, 'info');
-      } else {
-        logProgress(`No cached models found for brand ${brand.name} (cachedResult is null/undefined)`, 'info');
+        };
       }
+      logProgress(`Cache miss for brand ${brand.name}`, 'info');
       
-      // Filter cached models based on current request filters
-      const filteredCachedModels = this.filterModels(cachedModels, options.minYear, excludeKeywords);
-      logProgress(`Filtered cached models: ${filteredCachedModels.length} match current filters`, 'info');
-      
-      // Get all devices for the brand (without minYear filter to get all available devices)
-      const allDevices = await this.searchDevicesByBrand(brand.name, {
-        minYear: null, // Get all devices, we'll filter later
+      // Get devices for the brand
+      const devices = await this.searchDevicesByBrand(brand.name, {
+        minYear: options.minYear,
         excludeKeywords: excludeKeywords,
         brandUrl: brand.url
       });
       
-      logProgress(`Found ${allDevices.length} total devices for brand ${brand.name}`, 'info');
+      logProgress(`Found ${devices.length} devices for brand ${brand.name}`, 'info');
       
-      if (allDevices.length === 0) {
+      if (devices.length === 0) {
         logProgress(`No devices found for brand ${brand.name}. This might be due to filters or parsing issues.`, 'warn');
         return {
           name: brand.name,
-          models: filteredCachedModels
+          models: []
         };
       }
       
-      // Get device_ids that are already cached
-      const cachedDeviceIds = new Set(
-        cachedModels
-          .map(m => m.device_id)
-          .filter(id => id !== null && id !== undefined)
-      );
+      // Convert devices to models (only basic info, no specifications)
+      const models = [];
+      const modelsPerBrand = options.modelsPerBrand || devices.length;
+      const devicesToProcess = devices.slice(0, modelsPerBrand);
       
-      // Filter devices: only get those that are not cached and match filters
-      const devicesToScrape = allDevices.filter(device => {
-        const deviceId = this.extractDeviceIdFromUrl(device.url);
-        const isCached = deviceId && cachedDeviceIds.has(parseInt(deviceId));
-        
-        // Apply minYear filter
-        if (options.minYear && device.year && device.year < options.minYear) {
-          return false;
-        }
-        
-        return !isCached;
-      });
-      
-      logProgress(`Need to scrape ${devicesToScrape.length} new devices (${allDevices.length - devicesToScrape.length} already cached)`, 'info');
-      
-      // Calculate how many models we need
-      const modelsPerBrand = options.modelsPerBrand || allDevices.length;
-      const neededModels = Math.max(0, modelsPerBrand - filteredCachedModels.length);
-      
-      // Scrape only new devices (up to neededModels)
-      const newModels = [];
-      const devicesToProcess = devicesToScrape.slice(0, neededModels);
-      
-      logProgress(`Processing ${devicesToProcess.length} new devices (need ${neededModels} more models)`, 'info');
+      logProgress(`Processing ${devicesToProcess.length} devices (limited by modelsPerBrand: ${modelsPerBrand})`, 'info');
       
       for (const device of devicesToProcess) {
         try {
@@ -1026,7 +944,7 @@ export class ScraperService {
           // Extract series from device name (first word)
           const series = device.name.split(' ')[0];
           
-          newModels.push({
+          models.push({
             model_name: device.name,
             series: series,
             release_date: releaseDate || null,
@@ -1043,7 +961,7 @@ export class ScraperService {
           const deviceId = this.extractDeviceIdFromUrl(device.url);
           const deviceUrl = device.url.startsWith('http') ? device.url : this.baseUrl + '/' + device.url.replace(/^\/+/, '');
           const series = device.name.split(' ')[0];
-          newModels.push({
+          models.push({
             model_name: device.name,
             series: series,
             release_date: device.year ? String(device.year) : null,
@@ -1054,30 +972,13 @@ export class ScraperService {
         }
       }
       
-      // Merge cached models with new models (preserve order: cached first, then new)
-      const allModels = [...cachedModels, ...newModels];
-      
-      // Update cache with all models (merged)
       const brandData = {
         name: brand.name,
-        models: allModels
+        models: models
       };
-      
-      await setCache(brandModelsCacheKey, brandData, CACHE_TTL_SECONDS);
-      logProgress(`Updated cache for brand ${brand.name} with ${allModels.length} total models`, 'success');
-      
-      // Prioritize cached models: first return filtered cached models, then new models
-      const cachedFiltered = this.filterModels(cachedModels, options.minYear, excludeKeywords);
-      const newFiltered = this.filterModels(newModels, options.minYear, excludeKeywords);
-      
-      // Combine: cached first, then new (up to modelsPerBrand)
-      const combinedModels = [...cachedFiltered, ...newFiltered];
-      const limitedModels = combinedModels.slice(0, modelsPerBrand);
-      
-      return {
-        name: brand.name,
-        models: limitedModels
-      };
+
+      await setCache(brandCacheKey, brandData, CACHE_TTL_SECONDS);
+      return brandData;
     } catch (error) {
       logProgress(`Error scraping brand ${brand.name}: ${error.message}`, 'error');
       return {
