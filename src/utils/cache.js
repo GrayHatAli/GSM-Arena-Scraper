@@ -54,16 +54,19 @@ export async function getCache(key) {
 
     const parsed = JSON.parse(data);
     logProgress(`Cache hit for key: ${key}`, 'success');
+    logProgress(`Cache data structure: ${JSON.stringify(Object.keys(parsed || {}))}`, 'info');
     
     // If data has cached_at timestamp, return it along with the data
-    if (parsed && typeof parsed === 'object' && parsed.cached_at) {
+    if (parsed && typeof parsed === 'object' && parsed.cached_at !== undefined) {
+      logProgress(`Cache has cached_at, using new format`, 'info');
       return {
-        data: parsed.data || parsed,
+        data: parsed.data !== undefined ? parsed.data : parsed,
         cached_at: parsed.cached_at
       };
     }
     
     // Handle old format (data without cached_at wrapper)
+    logProgress(`Cache does not have cached_at, using old format`, 'info');
     return parsed;
   } catch (error) {
     logProgress(`Redis get error for key ${key}: ${error.message}`, 'error');

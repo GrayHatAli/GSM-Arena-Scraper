@@ -914,11 +914,40 @@ export class ScraperService {
       let cachedModels = [];
       
       if (cachedResult) {
-        const cachedData = cachedResult.data || cachedResult;
-        cachedModels = cachedData.models || [];
-        logProgress(`Found ${cachedModels.length} cached models for brand ${brand.name}`, 'info');
+        logProgress(`Cache result received, type: ${typeof cachedResult}, keys: ${cachedResult ? Object.keys(cachedResult).join(', ') : 'null'}`, 'info');
+        
+        // Handle both new format (with data/cached_at) and old format (direct data)
+        let cachedData;
+        if (cachedResult && typeof cachedResult === 'object' && 'data' in cachedResult) {
+          // New format: { data: {...}, cached_at: "..." }
+          cachedData = cachedResult.data;
+          logProgress(`Using new cache format (with data wrapper), cachedData type: ${typeof cachedData}`, 'info');
+        } else {
+          // Old format: direct data or { name: "...", models: [...] }
+          cachedData = cachedResult;
+          logProgress(`Using old cache format (direct data), cachedData type: ${typeof cachedData}`, 'info');
+        }
+        
+        // Extract models from cached data
+        if (Array.isArray(cachedData)) {
+          // If cached data is directly an array of models
+          cachedModels = cachedData;
+          logProgress(`Cached data is array of models: ${cachedModels.length}`, 'info');
+        } else if (cachedData && typeof cachedData === 'object' && Array.isArray(cachedData.models)) {
+          // If cached data has models property
+          cachedModels = cachedData.models;
+          logProgress(`Cached data has models property: ${cachedModels.length}`, 'info');
+        } else {
+          logProgress(`Cached data structure unexpected. Type: ${typeof cachedData}, IsArray: ${Array.isArray(cachedData)}, Has models: ${cachedData && cachedData.models ? 'yes' : 'no'}`, 'warn');
+          if (cachedData && typeof cachedData === 'object') {
+            logProgress(`Cached data keys: ${Object.keys(cachedData).join(', ')}`, 'warn');
+          }
+          cachedModels = [];
+        }
+        
+        logProgress(`Final cached models count: ${cachedModels.length} for brand ${brand.name}`, 'info');
       } else {
-        logProgress(`No cached models found for brand ${brand.name}`, 'info');
+        logProgress(`No cached models found for brand ${brand.name} (cachedResult is null/undefined)`, 'info');
       }
       
       // Filter cached models based on current request filters
