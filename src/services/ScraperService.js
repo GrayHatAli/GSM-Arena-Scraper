@@ -905,8 +905,6 @@ export class ScraperService {
         logProgress(`No devices found for brand ${brand.name}. This might be due to filters or parsing issues.`, 'warn');
         return {
           name: brand.name,
-          logo_url: brand.logo_url || `${this.baseUrl}/img/logo_${brand.name}.png`,
-          is_active: true,
           models: []
         };
       }
@@ -971,8 +969,6 @@ export class ScraperService {
       
       const brandData = {
         name: brand.name,
-        logo_url: brand.logo_url || `${this.baseUrl}/img/logo_${brand.name}.png`,
-        is_active: true,
         models: models
       };
 
@@ -982,9 +978,7 @@ export class ScraperService {
       logProgress(`Error scraping brand ${brand.name}: ${error.message}`, 'error');
       return {
         name: brand.name,
-        logo_url: brand.logo_url || `${this.baseUrl}/img/logo_${brand.name}.png`,
         models: [],
-        is_active: false,
         error: error.message
       };
     }

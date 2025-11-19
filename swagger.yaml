@@ -334,12 +334,6 @@ components:
         url:
           type: string
           example: "https://www.gsmarena.com/apple-phones-48.php"
-        logo_url:
-          type: string
-          example: "https://www.gsmarena.com/img/logo_apple.png"
-        is_active:
-          type: boolean
-          example: true
 
     Device:
       type: object
@@ -424,12 +418,6 @@ components:
             name:
               type: string
               example: "apple"
-            logo_url:
-              type: string
-              example: "https://www.gsmarena.com/img/logo_apple.png"
-            is_active:
-              type: boolean
-              example: true
             models:
               type: array
               items:
@@ -446,12 +434,6 @@ components:
               name:
                 type: string
                 example: "apple"
-              logo_url:
-                type: string
-                example: "https://www.gsmarena.com/img/logo_apple.png"
-              is_active:
-                type: boolean
-                example: true
               models:
                 type: array
                 items:
