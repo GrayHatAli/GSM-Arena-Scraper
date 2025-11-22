@@ -320,7 +320,8 @@ export class ScraperService {
       const cachedDevices = await getCache(searchCacheKey);
       if (cachedDevices) {
         logProgress(`Cache hit for device search: ${brandName}`, 'success');
-        return cachedDevices;
+        // Ensure cached value is an array
+        return Array.isArray(cachedDevices) ? cachedDevices : [];
       }
       
       // Add random delay to avoid detection (increased to avoid rate limiting)
@@ -975,6 +976,15 @@ export class ScraperService {
         brandUrl: brand.url
       });
       
+      // Ensure devices is an array (safety check)
+      if (!Array.isArray(devices)) {
+        logProgress(`Error: searchDevicesByBrand returned non-array value for brand ${brand.name}`, 'error');
+        return {
+          name: brand.name,
+          models: []
+        };
+      }
+      
       logProgress(`Found ${devices.length} devices for brand ${brand.name}`, 'info');
       
       if (devices.length === 0) {
@@ -1239,6 +1249,12 @@ export class ScraperService {
       };
       
       const devices = await this.searchDevicesByBrand(searchTerm, options);
+      
+      // Ensure devices is an array (safety check)
+      if (!Array.isArray(devices)) {
+        logProgress(`Error: searchDevicesByBrand returned non-array value for search term ${searchTerm}`, 'error');
+        return [];
+      }
       
       // Add deviceId to each device
       const devicesWithId = devices.map(device => {
