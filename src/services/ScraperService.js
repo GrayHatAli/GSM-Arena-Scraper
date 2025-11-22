@@ -97,6 +97,57 @@ export class ScraperService {
   }
 
   /**
+   * Extract released year from "Status" field
+   * Status format: "Available. Released 2025, March 19" or similar
+   * @param {string} status - Status field value
+   * @returns {number|null} - Extracted released year or null
+   */
+  extractYearFromStatus(status) {
+    if (!status) return null;
+    
+    // Look for "Released" followed by a year pattern
+    // Pattern matches various formats:
+    // - "Released 2025"
+    // - "Released 2025, March"
+    // - "Released in 2025"
+    // - "Released March 2025"
+    // - "Released on 2025"
+    // Uses a more flexible pattern that allows optional words between "Released" and the year
+    const releasedMatch = status.match(/Released\s+(?:in|on|,)?\s*(?:[A-Za-z]+\s+)?(\d{4})/i);
+    if (releasedMatch) {
+      const year = parseInt(releasedMatch[1], 10);
+      // Validate it's a reasonable year (2000-2099) - consistent with fallback
+      if (year >= 2000 && year <= 2099) {
+        return year;
+      }
+    }
+    
+    // Fallback: look for year pattern specifically in context of "Released"
+    // This ensures we only match years that appear after "Released" text
+    // Pattern: "Released" followed by any characters (non-greedy) then a 4-digit year
+    const releasedContextMatch = status.match(/Released[^0-9]*(\d{4})/i);
+    if (releasedContextMatch) {
+      const year = parseInt(releasedContextMatch[1], 10);
+      // Validate it's a reasonable year (2000-2099)
+      if (year >= 2000 && year <= 2099) {
+        return year;
+      }
+    }
+    
+    return null;
+  }
+
+  /**
+   * Check if status indicates device is available
+   * @param {string} status - Status field value
+   * @returns {boolean} - True if status contains "Available"
+   */
+  isStatusAvailable(status) {
+    if (!status) return false;
+    return status.toLowerCase().includes('available');
+  }
+
+  /**
    * Get all available brands from GSM Arena
    * @returns {Promise<Array>} - Array of brand objects
    */
@@ -825,13 +876,33 @@ export class ScraperService {
         }
       }
       
-      // Apply minYear filter based on "Announced" field
-      if (options.minYear && processedSpecs['Announced']) {
-        const announcedYear = this.extractYearFromAnnounced(processedSpecs['Announced']);
-        if (announcedYear && announcedYear < options.minYear) {
-          logProgress(`Device ${device.name} announced in ${announcedYear}, filtered out by minYear ${options.minYear}`, 'info');
-          return null; // Return null to indicate this device should be filtered out
+      // Apply minYear filter based on "Status" field with Released date
+      // Filter: Status = Available && ReleasedYear >= minYear
+      // Only applies filter when we can verify the conditions (maintains backward compatibility)
+      // Similar to old behavior: only filter if field exists and fails the check
+      if (options.minYear) {
+        const status = processedSpecs['Status'];
+        
+        // Only apply filter if Status field exists (backward compatibility - old code only filtered if Announced existed)
+        if (status) {
+          const isAvailable = this.isStatusAvailable(status);
+          
+          // Only check ReleasedYear if status is Available (filter condition requires both)
+          if (isAvailable) {
+            // Extract released year from status
+            const releasedYear = this.extractYearFromStatus(status);
+            
+            // Only filter if we can extract released year and it fails the check
+            // (backward compatibility - old code only filtered if year could be extracted and failed)
+            if (releasedYear && releasedYear < options.minYear) {
+              logProgress(`Device ${device.name} released in ${releasedYear}, filtered out by minYear ${options.minYear}`, 'info');
+              return null; // Return null to indicate this device should be filtered out
+            }
+          }
+          // If status exists but is not Available, allow through (backward compatibility)
+          // If status exists and is Available but no Released year, allow through (backward compatibility)
         }
+        // If Status field doesn't exist, allow through (backward compatibility - old code only filtered if Announced existed)
       }
       
       return {
