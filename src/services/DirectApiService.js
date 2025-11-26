@@ -231,7 +231,13 @@ export class ScraperService {
             // Pattern 4: Links in makers section
             /<a href="([^"]+)"[^>]*class="[^"]*makers[^"]*"[^>]*>([^<]+)<\/a>/g,
             // Pattern 5: Device links in specific containers
-            /<a href="([^"]+)"[^>]*class="[^"]*phone[^"]*"[^>]*>([^<]+)<\/a>/g
+            /<a href="([^"]+)"[^>]*class="[^"]*phone[^"]*"[^>]*>([^<]+)<\/a>/g,
+            // Pattern 6: More flexible pattern for device links with strong tags
+            /<a[^>]*href="([^"]+)"[^>]*>[\s\S]*?<strong[^>]*>([^<]+)<\/strong>[\s\S]*?<\/a>/g,
+            // Pattern 7: Pattern for links with img and text (more flexible)
+            /<a[^>]*href="([^"]+)"[^>]*>[\s\S]*?<img[^>]*>[\s\S]*?<strong[^>]*>([^<]+)<\/strong>[\s\S]*?<\/a>/g,
+            // Pattern 8: Simple link pattern with device name in various formats
+            /<a[^>]*href="([^"]+\.php)"[^>]*>[\s\S]{0,500}?([A-Z][A-Za-z0-9\s\-]+(?:[A-Z][a-z]+)*)[\s\S]{0,500}?<\/a>/g
           ];
           
           for (const pattern of devicePatterns) {
@@ -286,7 +292,8 @@ export class ScraperService {
                 }
               }
               
-              // Apply minYear filter if specified
+              // Apply minYear filter if specified (only for devices with known year)
+              // Devices without year will be checked later by fetching their pages
               if (options.minYear && extractedYear && extractedYear < options.minYear) {
                 continue;
               }
@@ -367,6 +374,54 @@ export class ScraperService {
         if (!seenNames.has(device.name)) {
           seenNames.add(device.name);
           uniqueDevices.push(device);
+        }
+      }
+      
+      // If minYear is specified and some devices don't have a year, 
+      // try to extract year from device pages for those devices
+      if (options.minYear) {
+        const devicesWithoutYear = uniqueDevices.filter(d => !d.year);
+        if (devicesWithoutYear.length > 0) {
+          logProgress(`Extracting year from ${devicesWithoutYear.length} device pages (minYear=${options.minYear})`, 'info');
+          
+          // Process devices in parallel (but limit concurrency to avoid rate limiting)
+          const batchSize = 5;
+          for (let i = 0; i < devicesWithoutYear.length; i += batchSize) {
+            const batch = devicesWithoutYear.slice(i, i + batchSize);
+            await Promise.all(batch.map(async (device) => {
+              try {
+                const announcedDate = await this.getDeviceAnnounced(device.url);
+                if (announcedDate) {
+                  const year = this.extractYearFromAnnounced(announcedDate);
+                  if (year) {
+                    device.year = year;
+                    // Apply minYear filter
+                    if (year < options.minYear) {
+                      // Mark for removal
+                      device._shouldRemove = true;
+                    }
+                  }
+                }
+              } catch (error) {
+                logProgress(`Error extracting year for ${device.name}: ${error.message}`, 'warn');
+              }
+            }));
+            
+            // Add delay between batches to avoid rate limiting
+            if (i + batchSize < devicesWithoutYear.length) {
+              await this.delay(1000);
+            }
+          }
+          
+          // Remove devices that don't meet minYear requirement
+          const filteredDevices = uniqueDevices.filter(d => {
+            if (d._shouldRemove) return false;
+            if (options.minYear && d.year && d.year < options.minYear) return false;
+            return true;
+          });
+          
+          logProgress(`Found ${filteredDevices.length} unique devices for brand ${brandName} (after year extraction)`, 'success');
+          return filteredDevices;
         }
       }
       
@@ -652,6 +707,75 @@ export class ScraperService {
     };
     
     return this.getDeviceSpecifications(device);
+  }
+
+  /**
+   * Get device announced date (lightweight method)
+   * @param {string} deviceUrl - Device URL
+   * @returns {Promise<string|null>} - Announced date/year or null
+   */
+  async getDeviceAnnounced(deviceUrl) {
+    try {
+      const url = deviceUrl.startsWith('http') ? deviceUrl : this.baseUrl + '/' + deviceUrl;
+      // Increased delay to avoid rate limiting
+      await this.delay(1500);
+      
+      const response = await this.apiClient.get(url);
+      const html = response.data;
+      
+      // Look for "Announced" field in the specifications table
+      const announcedPatterns = [
+        // Pattern 1: Standard table row with class="ttl" and class="nfo"
+        /<td[^>]*class="ttl"[^>]*>Announced<\/td>\s*<td[^>]*class="nfo"[^>]*>([^<]+)<\/td>/i,
+        // Pattern 2: Table row without classes
+        /<td[^>]*>Announced<\/td>\s*<td[^>]*>([^<]+)<\/td>/i,
+        // Pattern 3: Table header and data
+        /<th[^>]*>Announced<\/th>\s*<td[^>]*>([^<]+)<\/td>/i,
+        // Pattern 4: More flexible pattern
+        /<tr[^>]*>[\s\S]*?<td[^>]*>Announced<\/td>[\s\S]*?<td[^>]*>([^<]+)<\/td>[\s\S]*?<\/tr>/i,
+        // Pattern 5: Simple text pattern
+        /Announced[:\s]+([^<\n]+)/i
+      ];
+      
+      for (const pattern of announcedPatterns) {
+        const match = html.match(pattern);
+        if (match && match[1]) {
+          let announced = match[1].trim();
+          
+          // Clean up HTML entities and extra whitespace
+          announced = announced.replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+          
+          // Remove any HTML tags that might be in the value
+          announced = announced.replace(/<[^>]+>/g, '').trim();
+          
+          if (announced && announced.length > 0) {
+            return announced;
+          }
+        }
+      }
+      
+      return null;
+    } catch (error) {
+      logProgress(`Error getting device announced date: ${error.message}`, 'warn');
+      return null;
+    }
+  }
+
+  /**
+   * Extract year from announced date string
+   * @param {string} announced - Announced date string (e.g., "2025, September 04")
+   * @returns {number|null} - Extracted year or null
+   */
+  extractYearFromAnnounced(announced) {
+    if (!announced) return null;
+    
+    // Look for 4-digit year patterns (e.g., "2025", "2024")
+    const yearMatch = announced.match(/\b(20\d{2})\b/);
+    if (yearMatch) {
+      return parseInt(yearMatch[1], 10);
+    }
+    
+    return null;
   }
 
   /**
