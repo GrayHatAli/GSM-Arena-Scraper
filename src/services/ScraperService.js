@@ -5,11 +5,8 @@
 
 import axios from 'axios';
 import { logProgress } from '../utils.js';
-import { getCache, setCache, DEFAULT_TTL_SECONDS } from '../utils/cache.js';
 import { CONFIG } from '../config/config.js';
-
-const CACHE_TTL_SECONDS = DEFAULT_TTL_SECONDS;
-const ALL_BRANDS_CACHE_KEY = 'brands:all:v1';
+import * as db from '../database/models.js';
 
 export class ScraperService {
   constructor() {
@@ -153,12 +150,6 @@ export class ScraperService {
    */
   async getAllBrands() {
     try {
-      const cachedBrands = await getCache(ALL_BRANDS_CACHE_KEY);
-      if (cachedBrands) {
-        logProgress('Retrieved available brands from cache', 'success');
-        return cachedBrands;
-      }
-
       logProgress('Getting available brands...', 'info');
       
       const response = await this.apiClient.get('/makers.php3');
@@ -296,7 +287,6 @@ export class ScraperService {
       });
       
       logProgress(`Found ${brands.length} brands`, 'success');
-      await setCache(ALL_BRANDS_CACHE_KEY, brands, CACHE_TTL_SECONDS);
       return brands;
     } catch (error) {
       logProgress(`Error getting available brands: ${error.message}`, 'error');
@@ -315,14 +305,6 @@ export class ScraperService {
     try {
       const brandNameLower = brandName ? brandName.toLowerCase() : null;
       logProgress(`Searching for devices by brand: ${brandName}`, 'info');
-
-      const searchCacheKey = this.buildDeviceSearchCacheKey(brandNameLower, options);
-      const cachedDevices = await getCache(searchCacheKey);
-      if (cachedDevices) {
-        logProgress(`Cache hit for device search: ${brandName}`, 'success');
-        // Ensure cached value is an array
-        return Array.isArray(cachedDevices) ? cachedDevices : [];
-      }
       
       // Add random delay to avoid detection (increased to avoid rate limiting)
       const randomDelay = Math.floor(Math.random() * 3000) + 2000; // 2-5 seconds
@@ -542,7 +524,6 @@ export class ScraperService {
       }
       
       logProgress(`Found ${uniqueDevices.length} unique devices for brand ${brandName}`, 'success');
-      await setCache(searchCacheKey, uniqueDevices, CACHE_TTL_SECONDS);
       return uniqueDevices;
     } catch (error) {
       logProgress(`Error searching devices by brand: ${error.message}`, 'error');
@@ -936,38 +917,12 @@ export class ScraperService {
       logProgress(`Scraping brand: ${brand.name}`, 'info');
       
       // Merge excludeKeywords from options with CONFIG defaults (remove duplicates)
-      // This must be done BEFORE building cache key to ensure consistency
       const excludeKeywords = [
         ...new Set([
           ...(CONFIG.EXCLUDE_KEYWORDS || []),
           ...(options.excludeKeywords || [])
         ])
       ];
-      
-      // Build cache key with merged excludeKeywords and all parameters
-      const cacheOptions = {
-        ...options,
-        excludeKeywords: excludeKeywords
-      };
-      const brandCacheKey = this.buildBrandCacheKey(brand.name, cacheOptions);
-      logProgress(`Checking cache for key: ${brandCacheKey}`, 'info');
-      const cachedResult = await getCache(brandCacheKey);
-      if (cachedResult) {
-        logProgress(`Cache hit for brand ${brand.name}`, 'success');
-        // Return brand data with cache metadata
-        // Handle both new format (with data/cached_at) and old format (direct data)
-        const brandData = cachedResult.data || cachedResult;
-        const cachedAt = cachedResult.cached_at || null;
-        
-        return {
-          ...brandData,
-          _cache_metadata: {
-            cached: true,
-            cached_at: cachedAt
-          }
-        };
-      }
-      logProgress(`Cache miss for brand ${brand.name}`, 'info');
       
       // Get devices for the brand
       const devices = await this.searchDevicesByBrand(brand.name, {
@@ -1055,12 +1010,32 @@ export class ScraperService {
         }
       }
       
+      // Save brand to database
+      await db.saveBrand({
+        name: brand.name,
+        url: brand.url || null,
+        is_active: true
+      });
+
+      // Save models to database
+      for (const model of models) {
+        await db.saveModel({
+          brand_name: brand.name,
+          brand_url: brand.url || null,
+          model_name: model.model_name,
+          series: model.series,
+          release_date: model.release_date,
+          device_id: model.device_id,
+          device_url: model.device_url,
+          image_url: model.image_url
+        });
+      }
+
       const brandData = {
         name: brand.name,
         models: models
       };
 
-      await setCache(brandCacheKey, brandData, CACHE_TTL_SECONDS);
       return brandData;
     } catch (error) {
       logProgress(`Error scraping brand ${brand.name}: ${error.message}`, 'error');
@@ -1302,13 +1277,55 @@ export class ScraperService {
    * @returns {Promise<Object>} - Device specifications
    */
   async getDeviceSpecificationsById(deviceId) {
-    // This method expects a device ID, but we need to construct the device object
-    const device = {
-      name: `Device ${deviceId}`,
-      url: `${this.baseUrl}/device-${deviceId}.php`
-    };
-    
-    return this.getDeviceSpecifications(device, {});
+    try {
+      const deviceIdNum = parseInt(deviceId, 10);
+      if (isNaN(deviceIdNum)) {
+        throw new Error(`Invalid device ID: ${deviceId}`);
+      }
+
+      // Check database first
+      const dbSpecs = await db.getSpecificationsByDeviceId(deviceIdNum);
+      if (dbSpecs) {
+        logProgress(`Retrieved specifications for device ${deviceId} from database`, 'success');
+        return {
+          specifications: dbSpecs.specifications,
+          image_url: dbSpecs.image_url,
+          ram_options: dbSpecs.ram_options,
+          storage_options: dbSpecs.storage_options,
+          color_options: dbSpecs.color_options
+        };
+      }
+
+      // If not in database, scrape it
+      logProgress(`Specifications not found in database for device ${deviceId}, scraping...`, 'info');
+      
+      // Get model info from database to construct device object
+      const model = await db.getModelByDeviceId(deviceIdNum);
+      const device = {
+        name: model ? model.model_name : `Device ${deviceId}`,
+        url: model ? model.device_url : `${this.baseUrl}/device-${deviceId}.php`
+      };
+      
+      const specs = await this.getDeviceSpecifications(device, {});
+      
+      // Save to database
+      if (specs && specs.specifications) {
+        await db.saveSpecifications({
+          device_id: deviceIdNum,
+          specifications: specs.specifications,
+          image_url: specs.image_url,
+          ram_options: specs.ram_options || [],
+          storage_options: specs.storage_options || [],
+          color_options: specs.color_options || []
+        });
+        logProgress(`Saved specifications for device ${deviceId} to database`, 'success');
+      }
+      
+      return specs;
+    } catch (error) {
+      logProgress(`Error getting device specifications for ${deviceId}: ${error.message}`, 'error');
+      throw error;
+    }
   }
 
   /**
@@ -1322,23 +1339,6 @@ export class ScraperService {
       hasBrowser: false,
       timestamp: new Date().toISOString()
     };
-  }
-
-  buildBrandCacheKey(brandName, options = {}) {
-    const normalizedName = (brandName || 'unknown').toLowerCase();
-    const minYear = options.minYear ?? 'all';
-    // Use 'all' for cache key if modelsPerBrand is not specified (to match actual behavior)
-    const modelsPerBrand = options.modelsPerBrand !== undefined ? options.modelsPerBrand : 'all';
-    const exclude = (options.excludeKeywords || []).slice().sort().join('|') || 'none';
-    return `brand:${normalizedName}:min:${minYear}:models:${modelsPerBrand}:exclude:${exclude}`;
-  }
-
-  buildDeviceSearchCacheKey(brandNameLower, options = {}) {
-    const name = brandNameLower || 'unknown';
-    const minYear = options.minYear ?? 'all';
-    const exclude = (options.excludeKeywords || []).slice().sort().join('|') || 'none';
-    const brandUrlToken = (options.brandUrl || '').toLowerCase();
-    return `devices:${name}:min:${minYear}:exclude:${exclude}:url:${brandUrlToken}`;
   }
 }
 

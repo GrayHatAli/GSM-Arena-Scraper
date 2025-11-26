@@ -4,6 +4,7 @@ import { ScraperAPI } from './api/server.js';
 import { ScraperAPIClient } from './api/client.js';
 import { ScraperController } from './controllers/ScraperController.js';
 import { CONFIG } from './config/config.js';
+import { runInitialScrapeInBackground } from './database/initialScrape.js';
 
 /**
  * Start API Server
@@ -13,6 +14,10 @@ async function startServer() {
     console.log('🚀 Starting GSM Arena Scraper API Server...');
     const api = new ScraperAPI();
     api.start();
+    
+    // Run initial scrape in background (non-blocking)
+    console.log('📊 Starting initial database population in background...');
+    runInitialScrapeInBackground();
   } catch (error) {
     console.error('❌ Failed to start API server:', error.message);
     process.exit(1);

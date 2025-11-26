@@ -66,6 +66,7 @@ export class ScraperRoutes {
       'GET /status': this.getStatus.bind(this),
       
       // Brand endpoints
+      'GET /brands': this.getBrands.bind(this),
       'POST /brands': this.scrapeBrands.bind(this),
       
       // Device endpoints

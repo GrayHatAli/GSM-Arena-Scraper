@@ -2,6 +2,7 @@
 
 import { ScraperService } from '../services/ScraperService.js';
 import { ResponseHelper } from '../utils/ResponseHelper.js';
+import * as db from '../database/models.js';
 
 export class ScraperController {
   constructor() {
@@ -68,10 +69,64 @@ export class ScraperController {
    */
   async searchDevices(filters = {}) {
     try {
+      // Try to get from database first
+      const dbModels = await db.searchModels(filters);
+      
+      if (dbModels && dbModels.length > 0) {
+        // Convert database models to device format
+        const devices = dbModels.map(model => ({
+          deviceId: model.device_id || 'unknown',
+          name: model.model_name,
+          url: model.device_url,
+          year: model.release_date ? parseInt(model.release_date.substring(0, 4)) : null,
+          brand_name: model.brand_name
+        }));
+        
+        return ResponseHelper.success(`Found ${devices.length} devices`, { devices });
+      }
+      
+      // If no results in database, fall back to scraping (for backward compatibility)
       const devices = await this.scraperService.searchDevices(filters);
       return ResponseHelper.success(`Found ${devices.length} devices`, { devices });
     } catch (error) {
       return ResponseHelper.error('Failed to search devices', error.message);
+    }
+  }
+
+  /**
+   * Get brands from database
+   * @param {Object} options - Query options
+   * @returns {Object} - List of brands with models
+   */
+  async getBrands(options = {}) {
+    try {
+      const brands = await db.getBrands(options);
+      
+      // For each brand, get its models
+      const brandsWithModels = await Promise.all(
+        brands.map(async (brand) => {
+          const models = await db.getModelsByBrandId(brand.id);
+          return {
+            ...brand,
+            models: models.map(model => ({
+              model_name: model.model_name,
+              series: model.series,
+              release_date: model.release_date,
+              device_id: model.device_id,
+              device_url: model.device_url,
+              image_url: model.image_url
+            }))
+          };
+        })
+      );
+      
+      return ResponseHelper.success('Retrieved brands successfully', {
+        brands: brandsWithModels,
+        total_brands: brandsWithModels.length,
+        total_models: brandsWithModels.reduce((total, brand) => total + (brand.models?.length || 0), 0)
+      });
+    } catch (error) {
+      return ResponseHelper.error('Failed to get brands', error.message);
     }
   }
 
