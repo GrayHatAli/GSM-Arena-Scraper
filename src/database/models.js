@@ -21,9 +21,25 @@ function mapBrand(row) {
 
 function mapModel(row) {
   if (!row) return null;
+  // If release_year is already set, use it; otherwise try to extract from release_date
+  let releaseYear = row.release_year;
+  if (!releaseYear && row.release_date) {
+    const releaseDateStr = String(row.release_date);
+    // Try to extract 4-digit year from the string (could be "2025" or "Released 2025, September 09")
+    const yearMatch = releaseDateStr.match(/\b(20\d{2})\b/);
+    if (yearMatch) {
+      releaseYear = parseInt(yearMatch[1], 10);
+    } else {
+      // Fallback: try first 4 characters if they're all digits
+      const firstFour = releaseDateStr.substring(0, 4);
+      if (/^\d{4}$/.test(firstFour)) {
+        releaseYear = parseInt(firstFour, 10);
+      }
+    }
+  }
   return {
     ...row,
-    release_year: row.release_year || (row.release_date ? parseInt(String(row.release_date).substring(0, 4), 10) : null)
+    release_year: releaseYear || null
   };
 }
 
@@ -102,7 +118,7 @@ export async function getBrands(options = {}) {
     }
 
     query += ' ORDER BY name ASC';
-    const rows = db.prepare(query).all(params);
+    const rows = db.prepare(query).all(...params);
     return rows.map(mapBrand);
   } catch (error) {
     logProgress(`Error getting brands: ${error.message}`, 'error');
@@ -158,7 +174,22 @@ export async function saveModel(model) {
     }
 
     const normalizedName = model.model_name.trim();
-    const releaseYear = model.release_date ? parseInt(String(model.release_date).substring(0, 4), 10) : null;
+    // Use release_year if provided, otherwise try to extract from release_date
+    let releaseYear = model.release_year || null;
+    if (!releaseYear && model.release_date) {
+      const releaseDateStr = String(model.release_date);
+      // Try to extract 4-digit year from the string (could be "2025" or "Released 2025, September 09")
+      const yearMatch = releaseDateStr.match(/\b(20\d{2})\b/);
+      if (yearMatch) {
+        releaseYear = parseInt(yearMatch[1], 10);
+      } else {
+        // Fallback: try first 4 characters if they're all digits
+        const firstFour = releaseDateStr.substring(0, 4);
+        if (/^\d{4}$/.test(firstFour)) {
+          releaseYear = parseInt(firstFour, 10);
+        }
+      }
+    }
     const now = new Date().toISOString();
 
     const stmt = db.prepare(`
@@ -408,7 +439,7 @@ export async function searchModels(filters = {}) {
     }
 
     query += ' ORDER BY m.model_name ASC';
-    const rows = db.prepare(query).all(params);
+    const rows = db.prepare(query).all(...params);
     return rows.map(mapModel);
   } catch (error) {
     logProgress(`Error searching models: ${error.message}`, 'error');

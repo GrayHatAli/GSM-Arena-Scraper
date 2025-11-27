@@ -63,3 +63,7 @@ export function getJob(jobId) {
   return jobQueue.getJobById(jobId);
 }
 
+export function getJobs(filters = {}) {
+  return jobQueue.getJobs(filters);
+}
+

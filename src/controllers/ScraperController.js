@@ -4,7 +4,7 @@ import { ScraperService } from '../services/ScraperService.js';
 import { ResponseHelper } from '../utils/ResponseHelper.js';
 import * as db from '../database/models.js';
 import { CONFIG } from '../config/config.js';
-import { enqueueBrandScrape, enqueueDeviceSpecs, getJob } from '../jobs/index.js';
+import { enqueueBrandScrape, enqueueDeviceSpecs, getJob, getJobs } from '../jobs/index.js';
 
 export class ScraperController {
   constructor() {
@@ -20,14 +20,21 @@ export class ScraperController {
   async scrapeBrands(brands, options = {}) {
     try {
       const minYear = options.minYear ? parseInt(options.minYear, 10) : null;
-      const normalizedInput = Array.isArray(brands) ? brands : CONFIG.DEFAULT_TARGET_BRANDS;
-      if (!normalizedInput || normalizedInput.length === 0) {
-        return ResponseHelper.validationError('At least one brand must be provided in the request body', [
-          'Provide brands: [] with at least one brand name'
-        ]);
+      
+      // Treat undefined, null, or empty array as "scrape all brands"
+      // If brands is provided and is a non-empty array, use it; otherwise scrape all brands
+      let requestedBrands = [];
+      if (brands && Array.isArray(brands) && brands.length > 0) {
+        requestedBrands = brands.map(brand => brand.toLowerCase());
+      } else {
+        // No brands specified - scrape all brands from database
+        const allBrands = await db.getBrands({ is_active: true });
+        requestedBrands = allBrands.map(brand => brand.name.toLowerCase());
+        
+        if (requestedBrands.length === 0) {
+          return ResponseHelper.error('No brands available in database. Please wait for initial brand synchronization to complete.');
+        }
       }
-
-      const requestedBrands = normalizedInput.map(brand => brand.toLowerCase());
 
       const ready = [];
       const pending = [];
@@ -232,6 +239,24 @@ export class ScraperController {
       return ResponseHelper.success('Job status retrieved', job);
     } catch (error) {
       return ResponseHelper.error('Failed to get job status', error.message);
+    }
+  }
+
+  /**
+   * Get list of jobs with optional filters
+   * @param {Object} filters - Optional filters (status, job_type, limit)
+   * @returns {Object}
+   */
+  async getJobsList(filters = {}) {
+    try {
+      const jobs = getJobs(filters);
+      return ResponseHelper.success('Jobs retrieved successfully', {
+        jobs,
+        count: jobs.length,
+        filters
+      });
+    } catch (error) {
+      return ResponseHelper.error('Failed to get jobs list', error.message);
     }
   }
 }

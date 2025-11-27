@@ -35,6 +35,34 @@ export class JobQueue {
     return this.mapJob(row);
   }
 
+  getJobs(filters = {}) {
+    const db = getDatabase();
+    if (!db) return [];
+    
+    let query = 'SELECT * FROM scrape_jobs WHERE 1=1';
+    const params = [];
+    
+    if (filters.status) {
+      query += ' AND status = ?';
+      params.push(filters.status);
+    }
+    
+    if (filters.job_type) {
+      query += ' AND job_type = ?';
+      params.push(filters.job_type);
+    }
+    
+    query += ' ORDER BY id DESC';
+    
+    if (filters.limit) {
+      query += ' LIMIT ?';
+      params.push(filters.limit);
+    }
+    
+    const rows = db.prepare(query).all(...params);
+    return rows.map(row => this.mapJob(row));
+  }
+
   getActiveJobForPayload(type, payloadHash) {
     const db = getDatabase();
     if (!db) return null;

@@ -631,8 +631,8 @@ export class ScraperService {
         }
       }
       
-      // If minYear is specified and some devices don't have a year, 
-      // try to extract year from device pages for those devices
+      // If minYear is specified, extract year from device pages for devices without year
+      // and then apply minYear filtering to all devices
       if (options.minYear) {
         const devicesWithoutYear = uniqueDevices.filter(d => !d.year);
         if (devicesWithoutYear.length > 0) {
@@ -649,11 +649,6 @@ export class ScraperService {
                   const year = this.extractYearFromAnnounced(announcedDate);
                   if (year) {
                     device.year = year;
-                    // Apply minYear filter
-                    if (year < options.minYear) {
-                      // Mark for removal
-                      device._shouldRemove = true;
-                    }
                   }
                 }
               } catch (error) {
@@ -666,17 +661,19 @@ export class ScraperService {
               await this.delay(1000);
             }
           }
-          
-          // Remove devices that don't meet minYear requirement
-          const filteredDevices = uniqueDevices.filter(d => {
-            if (d._shouldRemove) return false;
-            if (options.minYear && d.year && d.year < options.minYear) return false;
-            return true;
-          });
-          
-          logProgress(`Found ${filteredDevices.length} unique devices for brand ${brandName} (after year extraction)`, 'success');
-          return filteredDevices;
         }
+        
+        // Always apply minYear filter to all devices (whether they had years initially or we just extracted them)
+        const filteredDevices = uniqueDevices.filter(d => {
+          // Keep devices without year (they might be filtered later or we couldn't determine year)
+          if (!d.year) return true;
+          // Exclude devices with year less than minYear
+          if (d.year < options.minYear) return false;
+          return true;
+        });
+        
+        logProgress(`Found ${filteredDevices.length} unique devices for brand ${brandName} (after minYear=${options.minYear} filtering)`, 'success');
+        return filteredDevices;
       }
       
       logProgress(`Found ${uniqueDevices.length} unique devices for brand ${brandName}`, 'success');
@@ -1142,8 +1139,33 @@ export class ScraperService {
           await this.delay(3000);
           const announcedDate = await this.getDeviceAnnounced(device.url);
           
-          // Use announced date if available, otherwise fall back to device.year
-          const releaseDate = device.releaseSnippet || announcedDate || (device.year ? String(device.year) : null);
+          // Extract year from releaseSnippet if available, otherwise use announced date or device.year
+          let releaseDate = null;
+          let releaseYear = device.year;
+          
+          if (device.releaseSnippet) {
+            // Extract year from release snippet (e.g., "Released 2025, September 09" -> "2025")
+            const extractedYear = this.extractYearFromReleaseSnippet(device.releaseSnippet);
+            if (extractedYear) {
+              releaseYear = extractedYear;
+              releaseDate = String(extractedYear); // Store just the year as release_date
+            } else {
+              // If we can't extract year, store the full snippet but this shouldn't happen
+              releaseDate = device.releaseSnippet;
+            }
+          } else if (announcedDate) {
+            // Extract year from announced date
+            const extractedYear = this.extractYearFromAnnounced(announcedDate);
+            if (extractedYear) {
+              releaseYear = extractedYear;
+              releaseDate = String(extractedYear);
+            } else {
+              releaseDate = announcedDate;
+            }
+          } else if (device.year) {
+            releaseYear = device.year;
+            releaseDate = String(device.year);
+          }
           
           // Extract series from device name (first word)
           const series = device.name.split(' ')[0];
@@ -1152,6 +1174,7 @@ export class ScraperService {
             model_name: device.name,
             series: series,
             release_date: releaseDate || null,
+            release_year: releaseYear || null,
             device_id: deviceId ? parseInt(deviceId) : null,
             device_url: deviceUrl,
             image_url: imageUrl
@@ -1169,6 +1192,7 @@ export class ScraperService {
             model_name: device.name,
             series: series,
             release_date: device.year ? String(device.year) : null,
+            release_year: device.year || null,
             device_id: deviceId ? parseInt(deviceId) : null,
             device_url: deviceUrl,
             image_url: null

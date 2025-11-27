@@ -49,7 +49,8 @@ class SQLitePool {
     const result = statement.run(params);
     return {
       rows: [],
-      lastInsertRowid: result.lastInsertRowid,
+      // better-sqlite3 returns lastInsertRowid (lowercase), but handle both cases for compatibility
+      lastInsertRowid: result.lastInsertRowid || result.lastInsertROWID || result.lastInsertRowId,
       changes: result.changes
     };
   }

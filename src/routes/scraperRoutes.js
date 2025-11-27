@@ -73,6 +73,7 @@ export class ScraperRoutes {
       'GET /devices/:deviceId/specifications': this.getDeviceSpecifications.bind(this),
       'POST /devices/search': this.searchDevices.bind(this),
       'GET /jobs/:jobId': this.getJobStatus.bind(this),
+      'GET /jobs': this.getJobsList.bind(this),
       
       // Data endpoints
       'GET /data/latest': this.getLatestData.bind(this),
@@ -152,8 +153,9 @@ export class ScraperRoutes {
     try {
       const { brands, options = {} } = req.body;
       
-      // brands is now optional - if not provided, scrape all brands
-      const result = await this.controller.scrapeBrands(brands || [], options);
+      // brands is now optional - if not provided or empty array, treat as undefined to scrape all brands
+      const brandsToScrape = (brands && Array.isArray(brands) && brands.length > 0) ? brands : undefined;
+      const result = await this.controller.scrapeBrands(brandsToScrape, options);
       
       // Set appropriate HTTP status code based on result
       if (result.success === false) {
@@ -275,34 +277,14 @@ export class ScraperRoutes {
 
   /**
    * Get Swagger UI
+   * This method is kept for backward compatibility but Swagger UI is now handled directly in server.js
    * @param {Object} req - Request object
    * @param {Object} res - Response object
    */
   async getSwaggerUI(req, res) {
-    try {
-      // Use swaggerUi.setup to generate HTML
-      const swaggerSetup = swaggerUi.setup(swaggerDocument, {
-        customCss: '.swagger-ui .topbar { display: none }',
-        customSiteTitle: 'GSM Arena Scraper API Documentation'
-      });
-      // swaggerUi.setup returns middleware, so we need to call it
-      if (Array.isArray(swaggerSetup)) {
-        swaggerSetup[0](req, res, () => {});
-      } else if (typeof swaggerSetup === 'function') {
-        swaggerSetup(req, res, () => {});
-      } else {
-        res.status(500).json({
-          success: false,
-          message: 'Failed to load Swagger UI - invalid setup'
-        });
-      }
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: 'Failed to load Swagger UI',
-        error: error.message
-      });
-    }
+    // Swagger UI is handled by middleware in server.js
+    // This method should not be called, but if it is, redirect to /docs
+    res.redirect('/docs');
   }
 
   /**
@@ -335,6 +317,30 @@ export class ScraperRoutes {
       res.status(500).json({
         success: false,
         message: 'Failed to get job status',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Get list of jobs with optional filters
+   * @param {Object} req
+   * @param {Object} res
+   */
+  async getJobsList(req, res) {
+    try {
+      const { status, job_type, limit } = req.query;
+      const filters = {};
+      if (status) filters.status = status;
+      if (job_type) filters.job_type = job_type;
+      if (limit) filters.limit = parseInt(limit, 10);
+      
+      const result = await this.controller.getJobsList(filters);
+      res.status(result.statusCode || 200).json(result);
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: 'Failed to get jobs list',
         error: error.message
       });
     }
