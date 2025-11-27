@@ -11,7 +11,10 @@ RUN apk add --no-cache \
     ca-certificates \
     ttf-freefont \
     udev \
-    ttf-opensans
+    ttf-opensans \
+    python3 \
+    make \
+    g++
 
 # Set Puppeteer to use installed Chromium
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \

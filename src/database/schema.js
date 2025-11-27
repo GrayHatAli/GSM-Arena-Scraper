@@ -5,51 +5,74 @@
 export const SCHEMA = {
   brands: `
     CREATE TABLE IF NOT EXISTS brands (
-      id SERIAL PRIMARY KEY,
-      name VARCHAR(255) NOT NULL UNIQUE,
-      url VARCHAR(500),
-      is_active BOOLEAN DEFAULT true,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE,
+      display_name TEXT,
+      url TEXT,
+      is_active INTEGER DEFAULT 1,
+      estimated_models INTEGER DEFAULT 0,
+      last_scraped_at TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
-    
     CREATE INDEX IF NOT EXISTS idx_brands_name ON brands(name);
-    CREATE INDEX IF NOT EXISTS idx_brands_is_active ON brands(is_active);
+    CREATE INDEX IF NOT EXISTS idx_brands_active ON brands(is_active);
   `,
 
   models: `
     CREATE TABLE IF NOT EXISTS models (
-      id SERIAL PRIMARY KEY,
-      brand_id INTEGER NOT NULL REFERENCES brands(id) ON DELETE CASCADE,
-      model_name VARCHAR(500) NOT NULL,
-      series VARCHAR(255),
-      release_date VARCHAR(50),
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      brand_id INTEGER NOT NULL,
+      model_name TEXT NOT NULL,
+      series TEXT,
+      release_date TEXT,
+      release_year INTEGER,
       device_id INTEGER UNIQUE,
-      device_url VARCHAR(500),
-      image_url VARCHAR(500),
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      device_url TEXT,
+      image_url TEXT,
+      last_fetched_at TEXT,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (brand_id) REFERENCES brands(id) ON DELETE CASCADE
     );
-    
     CREATE INDEX IF NOT EXISTS idx_models_brand_id ON models(brand_id);
     CREATE INDEX IF NOT EXISTS idx_models_device_id ON models(device_id);
-    CREATE INDEX IF NOT EXISTS idx_models_model_name ON models(model_name);
+    CREATE INDEX IF NOT EXISTS idx_models_release_year ON models(release_year);
   `,
 
   specifications: `
     CREATE TABLE IF NOT EXISTS specifications (
-      id SERIAL PRIMARY KEY,
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
       device_id INTEGER NOT NULL UNIQUE,
-      specifications_json JSONB NOT NULL,
-      image_url VARCHAR(500),
-      ram_options JSONB DEFAULT '[]'::jsonb,
-      storage_options JSONB DEFAULT '[]'::jsonb,
-      color_options JSONB DEFAULT '[]'::jsonb,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      specifications_json TEXT NOT NULL,
+      image_url TEXT,
+      ram_options TEXT DEFAULT '[]',
+      storage_options TEXT DEFAULT '[]',
+      color_options TEXT DEFAULT '[]',
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
-    
     CREATE INDEX IF NOT EXISTS idx_specifications_device_id ON specifications(device_id);
+  `,
+
+  jobs: `
+    CREATE TABLE IF NOT EXISTS scrape_jobs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      job_type TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      attempts INTEGER NOT NULL DEFAULT 0,
+      max_attempts INTEGER NOT NULL DEFAULT 3,
+      priority INTEGER NOT NULL DEFAULT 0,
+      run_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      queued_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      started_at TEXT,
+      completed_at TEXT,
+      last_error TEXT,
+      result TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_jobs_status_run_at ON scrape_jobs(status, run_at);
+    CREATE INDEX IF NOT EXISTS idx_jobs_type ON scrape_jobs(job_type);
   `
 };
 

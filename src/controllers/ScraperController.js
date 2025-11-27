@@ -3,6 +3,8 @@
 import { ScraperService } from '../services/ScraperService.js';
 import { ResponseHelper } from '../utils/ResponseHelper.js';
 import * as db from '../database/models.js';
+import { CONFIG } from '../config/config.js';
+import { enqueueBrandScrape, enqueueDeviceSpecs, getJob } from '../jobs/index.js';
 
 export class ScraperController {
   constructor() {
@@ -17,17 +19,79 @@ export class ScraperController {
    */
   async scrapeBrands(brands, options = {}) {
     try {
-      const result = await this.scraperService.scrapeBrands(brands, options);
-      
-      // Calculate total models from brands array
-      const totalModels = result.brands.reduce((total, brand) => total + (brand.models?.length || 0), 0);
-      
-      // Return success even if no models found (this might be valid)
-      const message = totalModels > 0 
-        ? 'Brand scraping completed successfully' 
-        : 'Brand scraping completed but no models found for the specified filters';
-      
-      return ResponseHelper.success(message, result);
+      const minYear = options.minYear ? parseInt(options.minYear, 10) : null;
+      const normalizedInput = Array.isArray(brands) ? brands : CONFIG.DEFAULT_TARGET_BRANDS;
+      if (!normalizedInput || normalizedInput.length === 0) {
+        return ResponseHelper.validationError('At least one brand must be provided in the request body', [
+          'Provide brands: [] with at least one brand name'
+        ]);
+      }
+
+      const requestedBrands = normalizedInput.map(brand => brand.toLowerCase());
+
+      const ready = [];
+      const pending = [];
+
+      for (const brandName of requestedBrands) {
+        const models = await db.getModelsForBrandAndYear(brandName, minYear);
+        if (models.length > 0) {
+          ready.push({
+            name: brandName,
+            models: models.map(model => ({
+              model_name: model.model_name,
+              series: model.series,
+              release_date: model.release_date,
+              device_id: model.device_id,
+              device_url: model.device_url,
+              image_url: model.image_url
+            }))
+          });
+          continue;
+        }
+
+        const brandMeta = await db.getBrandByName(brandName);
+        const estimatedModels = brandMeta?.estimated_models || CONFIG.MODELS_PER_BRAND || 25;
+        const averageSecondsPerModel = 4; // includes random 1-5s delays
+        const etaMinutes = Math.max(1, Math.ceil((estimatedModels * averageSecondsPerModel) / 60));
+
+        const job = await enqueueBrandScrape(brandName, { minYear });
+        pending.push({
+          brand: brandName,
+          jobId: job?.id,
+          eta_minutes: etaMinutes
+        });
+      }
+
+      if (ready.length > 0 && pending.length === 0) {
+        const totalBrands = ready.length;
+        const totalModels = ready.reduce((sum, brand) => sum + (brand.models?.length || 0), 0);
+        return ResponseHelper.success('Brand data retrieved from database', {
+          brands: ready,
+          total_brands: totalBrands,
+          total_models: totalModels,
+          minYear
+        });
+      }
+
+      if (ready.length > 0 && pending.length > 0) {
+        const totalModels = ready.reduce((sum, brand) => sum + (brand.models?.length || 0), 0);
+        return ResponseHelper.success(
+          'Partial data returned. Remaining brands are being fetched in background.',
+          {
+            brands: ready,
+            pending,
+            total_brands: ready.length,
+            total_models: totalModels,
+            minYear
+          },
+          206
+        );
+      }
+
+      return ResponseHelper.accepted(
+        'Data is being fetched. Estimated completion time is based on the number of models per brand. Please retry after the suggested interval.',
+        { pending, minYear }
+      );
     } catch (error) {
       return ResponseHelper.error('Brand scraping failed', error.message);
     }
@@ -49,8 +113,19 @@ export class ScraperController {
    */
   async getDeviceSpecifications(deviceId) {
     try {
-      const specifications = await this.scraperService.getDeviceSpecificationsById(deviceId);
-      return ResponseHelper.success('Retrieved device specifications successfully', specifications);
+      const cached = await db.getSpecificationsByDeviceId(deviceId);
+      if (cached) {
+        return ResponseHelper.success('Retrieved device specifications from database', cached);
+      }
+
+      const job = await enqueueDeviceSpecs(deviceId);
+      return ResponseHelper.accepted(
+        'Device specifications are being fetched. Please retry in a few minutes.',
+        {
+          deviceId,
+          jobId: job?.id
+        }
+      );
     } catch (error) {
       return ResponseHelper.error('Failed to get device specifications', error.message);
     }
@@ -140,6 +215,23 @@ export class ScraperController {
       return ResponseHelper.success('Status retrieved successfully', status);
     } catch (error) {
       return ResponseHelper.error('Failed to get status', error.message);
+    }
+  }
+
+  /**
+   * Get job status by ID
+   * @param {string} jobId
+   * @returns {Object}
+   */
+  async getJobStatus(jobId) {
+    try {
+      const job = getJob(jobId);
+      if (!job) {
+        return ResponseHelper.notFound('Job not found');
+      }
+      return ResponseHelper.success('Job status retrieved', job);
+    } catch (error) {
+      return ResponseHelper.error('Failed to get job status', error.message);
     }
   }
 }

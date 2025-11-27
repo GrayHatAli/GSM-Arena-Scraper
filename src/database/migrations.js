@@ -21,16 +21,20 @@ export async function runMigrations() {
     logProgress('Running database migrations...', 'info');
 
     // Create brands table
-    await pool.query(SCHEMA.brands);
+    pool.exec(SCHEMA.brands);
     logProgress('Brands table created/verified', 'success');
 
     // Create models table
-    await pool.query(SCHEMA.models);
+    pool.exec(SCHEMA.models);
     logProgress('Models table created/verified', 'success');
 
     // Create specifications table
-    await pool.query(SCHEMA.specifications);
+    pool.exec(SCHEMA.specifications);
     logProgress('Specifications table created/verified', 'success');
+
+    // Create jobs table
+    pool.exec(SCHEMA.jobs);
+    logProgress('Jobs table created/verified', 'success');
 
     logProgress('All migrations completed successfully', 'success');
     return true;

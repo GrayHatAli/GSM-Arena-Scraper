@@ -19,13 +19,9 @@ let scrapePromise = null;
 export async function needsInitialScrape() {
   try {
     const brands = await db.getBrands();
-    const models = await db.getModelsByBrandId(1); // Check if any models exist
-    
-    // If we have brands but no models, or no brands at all, we need to scrape
-    return brands.length === 0 || (brands.length > 0 && models.length === 0);
+    return brands.length === 0;
   } catch (error) {
     logProgress(`Error checking if initial scrape is needed: ${error.message}`, 'error');
-    // If there's an error, assume we need to scrape
     return true;
   }
 }
@@ -76,48 +72,23 @@ export async function runInitialScrape() {
       // Create scraper service
       const scraperService = new ScraperService();
 
-      // Get all brands
+      // Get all brands once and cache
       logProgress('Fetching all brands...', 'info');
       const allBrands = await scraperService.getAllBrands();
       logProgress(`Found ${allBrands.length} brands`, 'success');
 
-      // Save all brands to database
       for (const brand of allBrands) {
         await db.saveBrand({
           name: brand.name,
+          display_name: brand.display_name || brand.name,
           url: brand.url || null,
-          is_active: brand.is_active !== undefined ? brand.is_active : true
+          is_active: true,
+          estimated_models: brand.estimated_models || 0
         });
       }
       logProgress(`Saved ${allBrands.length} brands to database`, 'success');
 
-      // Scrape models for each brand (without specifications)
-      let totalModels = 0;
-      for (let i = 0; i < allBrands.length; i++) {
-        const brand = allBrands[i];
-        try {
-          logProgress(`Scraping models for brand ${i + 1}/${allBrands.length}: ${brand.name}`, 'info');
-          
-          const brandData = await scraperService.scrapeBrand(brand, {
-            // Don't limit models per brand - scrape all
-            // Don't apply year filters - get all models
-            // Don't exclude keywords - get all models
-          });
-
-          totalModels += brandData.models?.length || 0;
-          logProgress(`Scraped ${brandData.models?.length || 0} models for ${brand.name}`, 'success');
-
-          // Add delay between brands to avoid rate limiting
-          if (i < allBrands.length - 1) {
-            await new Promise(resolve => setTimeout(resolve, 3000));
-          }
-        } catch (error) {
-          logProgress(`Error scraping brand ${brand.name}: ${error.message}`, 'error');
-          // Continue with next brand
-        }
-      }
-
-      logProgress(`Initial scraping completed! Total models: ${totalModels}`, 'success');
+      logProgress('Initial brand synchronization completed!', 'success');
       isScraping = false;
       return true;
     } catch (error) {

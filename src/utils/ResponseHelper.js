@@ -96,4 +96,20 @@ export class ResponseHelper {
       timestamp: new Date().toISOString()
     };
   }
+
+  /**
+   * Create accepted (202) response for async operations
+   * @param {string} message
+   * @param {*} data
+   * @returns {Object}
+   */
+  static accepted(message, data = null) {
+    return {
+      success: true,
+      message,
+      data,
+      statusCode: 202,
+      timestamp: new Date().toISOString()
+    };
+  }
 }

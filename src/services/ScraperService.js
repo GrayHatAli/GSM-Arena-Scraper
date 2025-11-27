@@ -25,6 +25,10 @@ export class ScraperService {
         'Referer': 'https://www.gsmarena.com/'
       }
     });
+    // In-memory cache for brand list (cache for 1 hour)
+    this._brandsCache = null;
+    this._brandsCacheTime = null;
+    this._brandsCacheTTL = 60 * 60 * 1000; // 1 hour in milliseconds
   }
 
   /**
@@ -94,6 +98,50 @@ export class ScraperService {
   }
 
   /**
+   * Extract release year from brand page snippet
+   * @param {string} snippet
+   * @returns {number|null}
+   */
+  extractYearFromReleaseSnippet(snippet) {
+    if (!snippet) return null;
+    const releasedMatch = snippet.match(/Released\s+(?:in\s+)?(\d{4})/i);
+    if (releasedMatch) {
+      const year = parseInt(releasedMatch[1], 10);
+      if (year >= 2000 && year <= 2099) {
+        return year;
+      }
+    }
+    
+    const fallback = snippet.match(/(\d{4})/);
+    if (fallback) {
+      const year = parseInt(fallback[1], 10);
+      if (year >= 2000 && year <= 2099) {
+        return year;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Build a map of device href -> release snippet from brand page HTML
+   * @param {string} html
+   * @returns {Map<string,string>}
+   */
+  extractReleaseInfoMap(html) {
+    const map = new Map();
+    if (!html) return map;
+    const releasePattern = /<a href="([^"]+)"[^>]*>[\s\S]*?<span[^>]*class="specs-brief-accent"[^>]*>([^<]+)<\/span>/gi;
+    let releaseMatch;
+    while ((releaseMatch = releasePattern.exec(html)) !== null) {
+      const href = releaseMatch[1]?.replace(/^\/+/, '');
+      const snippet = releaseMatch[2]?.trim();
+      if (!href || !snippet) continue;
+      map.set(href.toLowerCase(), snippet);
+    }
+    return map;
+  }
+
+  /**
    * Extract released year from "Status" field
    * Status format: "Available. Released 2025, March 19" or similar
    * @param {string} status - Status field value
@@ -150,16 +198,32 @@ export class ScraperService {
    */
   async getAllBrands() {
     try {
+      // Check cache first
+      const now = Date.now();
+      if (this._brandsCache && this._brandsCacheTime && (now - this._brandsCacheTime) < this._brandsCacheTTL) {
+        logProgress(`Using cached brand list (${this._brandsCache.length} brands)`, 'info');
+        return this._brandsCache;
+      }
+      
       logProgress('Getting available brands...', 'info');
       
-      const response = await this.apiClient.get('/makers.php3');
+      // Add delay before request to avoid rate limiting
+      await this.delay(3000);
+      
+      try {
+        // Use retry logic for rate limit errors
+        const response = await this.makeRequestWithRetry(
+          () => this.apiClient.get('/makers.php3'),
+          3, // max retries
+          5000 // base delay for retries (5s, 10s, 20s)
+        );
       
       // Extract brands from HTML response
       const html = response.data;
       
       const brands = [];
       const brandDataMap = new Map(); // Store href -> {name, url} mapping for deduplication
-      const brandNameMap = new Map(); // Store href -> extracted name from HTML
+      const brandNameMap = new Map(); // Store href -> extracted name/meta from HTML
       
       // Step 1: Extract brand names from table structure (if available)
       // Matches: <td><a href="brand-phones-N.php">BrandName<br><span>N devices</span></a></td>
@@ -175,28 +239,31 @@ export class ScraperService {
         while ((tableMatch = tablePatternWithName.exec(html)) !== null) {
           const href = tableMatch[1];
           let name = tableMatch[2] ? tableMatch[2].trim() : '';
-        
-        // Validate URL pattern (allow &, _, and - in brand names)
-        const brandUrlMatch = href.match(/([a-z0-9_&]+)-phones-\d+\.php/i);
-        if (!brandUrlMatch || !brandUrlMatch[1]) {
-          continue;
-        }
-        
-        // Clean up the name
-        if (name) {
-          name = name.replace(/\s+/g, ' ').trim();
-          name = name.replace(/<[^>]+>/g, '').trim(); // Remove any HTML tags
-          name = name.replace(/&[a-z]+;/gi, '').trim(); // Remove HTML entities
-          name = name.toLowerCase();
-        }
-        
-        // Store name if valid
-        if (name && name.length >= 2) {
-          const invalidNames = ['object', 'function', 'undefined', 'null', 'true', 'false', 'this', 'var', 'let', 'const'];
-          if (!invalidNames.includes(name)) {
-            brandNameMap.set(href, name);
+
+          const brandUrlMatch = href.match(/([a-z0-9_&]+)-phones-\d+\.php/i);
+          if (!brandUrlMatch || !brandUrlMatch[1]) {
+            continue;
           }
-        }
+
+          let displayName = name.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+          if (!displayName) {
+            continue;
+          }
+
+          const normalizedName = displayName.toLowerCase();
+          const invalidNames = ['object', 'function', 'undefined', 'null', 'true', 'false', 'this', 'var', 'let', 'const'];
+          if (invalidNames.includes(normalizedName)) {
+            continue;
+          }
+
+          const modelCountMatch = tableMatch[0].match(/(\d+)\s+devices?/i);
+          const estimatedModels = modelCountMatch ? parseInt(modelCountMatch[1], 10) : 0;
+
+          brandNameMap.set(href, {
+            normalizedName,
+            displayName,
+            estimatedModels
+          });
         }
       }
       
@@ -263,11 +330,16 @@ export class ScraperService {
         }
         
         // Use extracted name from HTML if available, otherwise use URL-based name
-        const finalName = brandNameMap.get(href) || brandNameFromUrl;
+        const meta = brandNameMap.get(href);
+        const finalName = meta?.normalizedName || brandNameFromUrl;
+        const displayName = meta?.displayName || finalName;
+        const estimatedModels = meta?.estimatedModels || 0;
         
         // Add to map (deduplication by href)
         brandDataMap.set(href, {
           name: finalName,
+          display_name: displayName,
+          estimated_models: estimatedModels,
           url,
           logo_url: '',
           is_active: true
@@ -287,8 +359,26 @@ export class ScraperService {
       });
       
       logProgress(`Found ${brands.length} brands`, 'success');
+      
+      // Cache the result
+      this._brandsCache = brands;
+      this._brandsCacheTime = Date.now();
+      
       return brands;
+      } catch (error) {
+        // If rate limited and we have old cache, use it
+        if (error.response?.status === 429 && this._brandsCache) {
+          logProgress(`Rate limited, using stale cache (${this._brandsCache.length} brands)`, 'warn');
+          return this._brandsCache;
+        }
+        throw error;
+      }
     } catch (error) {
+      // If we still have an error and have old cache, use it as last resort
+      if (this._brandsCache) {
+        logProgress(`Error getting brands, using stale cache (${this._brandsCache.length} brands): ${error.message}`, 'warn');
+        return this._brandsCache;
+      }
       logProgress(`Error getting available brands: ${error.message}`, 'error');
       console.error('Full error:', error);
       return [];
@@ -307,7 +397,7 @@ export class ScraperService {
       logProgress(`Searching for devices by brand: ${brandName}`, 'info');
       
       // Add random delay to avoid detection (increased to avoid rate limiting)
-      const randomDelay = Math.floor(Math.random() * 3000) + 2000; // 2-5 seconds
+      const randomDelay = Math.floor(Math.random() * 5000) + 3000; // 3-8 seconds
       await this.delay(randomDelay);
       
       // Try multiple search approaches
@@ -330,6 +420,7 @@ export class ScraperService {
       }
       
       let devices = [];
+      let lastReleaseInfoMap = null;
       
       for (const searchUrl of searchUrls) {
         try {
@@ -341,6 +432,7 @@ export class ScraperService {
             3000 // base delay for retries (3s, 6s, 12s)
           );
           const html = response.data;
+          lastReleaseInfoMap = this.extractReleaseInfoMap(html);
           
           // Log the response for debugging
           logProgress(`Search response length: ${html.length}`, 'info');
@@ -522,6 +614,70 @@ export class ScraperService {
           uniqueDevices.push(device);
         }
       }
+
+      const releaseInfoMap = lastReleaseInfoMap || new Map();
+      for (const device of uniqueDevices) {
+        const normalizedHref = device.url.replace(this.baseUrl, '').replace(/^\/+/, '').toLowerCase();
+        if (!normalizedHref) continue;
+        const snippet = releaseInfoMap?.get(normalizedHref);
+        if (snippet) {
+          device.releaseSnippet = snippet;
+          if (!device.year) {
+            const releaseYear = this.extractYearFromReleaseSnippet(snippet);
+            if (releaseYear) {
+              device.year = releaseYear;
+            }
+          }
+        }
+      }
+      
+      // If minYear is specified and some devices don't have a year, 
+      // try to extract year from device pages for those devices
+      if (options.minYear) {
+        const devicesWithoutYear = uniqueDevices.filter(d => !d.year);
+        if (devicesWithoutYear.length > 0) {
+          logProgress(`Extracting year from ${devicesWithoutYear.length} device pages (minYear=${options.minYear})`, 'info');
+          
+          // Process devices in parallel (but limit concurrency to avoid rate limiting)
+          const batchSize = 5;
+          for (let i = 0; i < devicesWithoutYear.length; i += batchSize) {
+            const batch = devicesWithoutYear.slice(i, i + batchSize);
+            await Promise.all(batch.map(async (device) => {
+              try {
+                const announcedDate = await this.getDeviceAnnounced(device.url);
+                if (announcedDate) {
+                  const year = this.extractYearFromAnnounced(announcedDate);
+                  if (year) {
+                    device.year = year;
+                    // Apply minYear filter
+                    if (year < options.minYear) {
+                      // Mark for removal
+                      device._shouldRemove = true;
+                    }
+                  }
+                }
+              } catch (error) {
+                logProgress(`Error extracting year for ${device.name}: ${error.message}`, 'warn');
+              }
+            }));
+            
+            // Add delay between batches to avoid rate limiting
+            if (i + batchSize < devicesWithoutYear.length) {
+              await this.delay(1000);
+            }
+          }
+          
+          // Remove devices that don't meet minYear requirement
+          const filteredDevices = uniqueDevices.filter(d => {
+            if (d._shouldRemove) return false;
+            if (options.minYear && d.year && d.year < options.minYear) return false;
+            return true;
+          });
+          
+          logProgress(`Found ${filteredDevices.length} unique devices for brand ${brandName} (after year extraction)`, 'success');
+          return filteredDevices;
+        }
+      }
       
       logProgress(`Found ${uniqueDevices.length} unique devices for brand ${brandName}`, 'success');
       return uniqueDevices;
@@ -669,7 +825,7 @@ export class ScraperService {
     try {
       const url = deviceUrl.startsWith('http') ? deviceUrl : this.baseUrl + '/' + deviceUrl;
       // Increased delay to avoid rate limiting
-      await this.delay(2000);
+      await this.delay(4000);
       
       // Use retry logic for rate limit errors
       const response = await this.makeRequestWithRetry(
@@ -739,7 +895,7 @@ export class ScraperService {
       logProgress(`Getting specifications for device: ${device.name}`, 'info');
       
       // Add random delay to avoid detection
-      const randomDelay = Math.floor(Math.random() * 2000) + 1000;
+      const randomDelay = Math.floor(Math.random() * 4000) + 1000; // 1-5 seconds
       await this.delay(randomDelay);
       
       // Get the device page
@@ -971,13 +1127,23 @@ export class ScraperService {
           
           // Get image_url and announced date sequentially to avoid rate limiting
           // Each request already has retry logic and delays built in
-          const imageUrl = await this.getDeviceImageUrl(device.url);
-          // Add delay between requests to avoid rate limiting
-          await this.delay(1000);
+          // Skip image URL if we're getting rate limited to speed up the process
+          let imageUrl = null;
+          try {
+            imageUrl = await this.getDeviceImageUrl(device.url);
+          } catch (error) {
+            if (error.response?.status === 429) {
+              logProgress(`  Skipping image URL for ${device.name} due to rate limit`, 'warn');
+            } else {
+              throw error;
+            }
+          }
+          // Add longer delay between requests to avoid rate limiting
+          await this.delay(3000);
           const announcedDate = await this.getDeviceAnnounced(device.url);
           
           // Use announced date if available, otherwise fall back to device.year
-          const releaseDate = announcedDate || (device.year ? String(device.year) : null);
+          const releaseDate = device.releaseSnippet || announcedDate || (device.year ? String(device.year) : null);
           
           // Extract series from device name (first word)
           const series = device.name.split(' ')[0];
@@ -992,7 +1158,7 @@ export class ScraperService {
           });
           
           // Add delay between device processing (increased to avoid rate limiting)
-          await this.delay(CONFIG.DELAYS.between_requests || 3000);
+          await this.delay(CONFIG.DELAYS.between_requests || 5000);
         } catch (error) {
           logProgress(`  Error processing device ${device.name}: ${error.message}`, 'error');
           // Add fallback model data with minimal info
@@ -1081,11 +1247,17 @@ export class ScraperService {
             const brandObj = brandLookup?.get(normalizedName);
 
             if (!brandObj) {
-              logProgress(`Brand "${brand}" not found in available brands list. Skipping.`, 'warn');
-              continue;
+              // If brand not found but we have a lookup, try to construct URL directly
+              // This allows scraping even if brand list fetch failed due to rate limiting
+              logProgress(`Brand "${brand}" not found in available brands list. Trying direct URL.`, 'warn');
+              brandsToScrape.push({
+                name: normalizedName,
+                url: `${this.baseUrl}/${normalizedName}-phones-48.php`,
+                is_active: true
+              });
+            } else {
+              brandsToScrape.push(brandObj);
             }
-
-            brandsToScrape.push(brandObj);
           } else if (brand && typeof brand === 'object') {
             brandsToScrape.push(brand);
           }
@@ -1102,8 +1274,6 @@ export class ScraperService {
       logProgress(`Starting to scrape ${brandsToScrape.length} brands`, 'info');
       
       const results = [];
-      let allCached = true;
-      let earliestCachedAt = null;
       
       for (const brand of brandsToScrape) {
         let brandObj;
@@ -1122,24 +1292,6 @@ export class ScraperService {
         logProgress(`Processing brand: ${brandObj.name}`, 'info');
         
         const brandData = await this.scrapeBrand(brandObj, options);
-        
-        // Extract cache metadata if present
-        const cacheMetadata = brandData._cache_metadata;
-        if (cacheMetadata) {
-          if (cacheMetadata.cached) {
-            // Track earliest cached_at timestamp
-            if (!earliestCachedAt || new Date(cacheMetadata.cached_at) < new Date(earliestCachedAt)) {
-              earliestCachedAt = cacheMetadata.cached_at;
-            }
-          } else {
-            allCached = false;
-          }
-          // Remove metadata from brand data before adding to results
-          delete brandData._cache_metadata;
-        } else {
-          allCached = false;
-        }
-        
         results.push(brandData);
         
         // Add delay between brand scraping
@@ -1147,9 +1299,7 @@ export class ScraperService {
       }
       
       return {
-        brands: results,
-        cached: allCached,
-        cached_at: allCached ? earliestCachedAt : null
+        brands: results
       };
     } catch (error) {
       logProgress(`Error in scrapeBrands: ${error.message}`, 'error');

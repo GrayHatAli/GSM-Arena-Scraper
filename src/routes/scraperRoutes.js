@@ -72,6 +72,7 @@ export class ScraperRoutes {
       // Device endpoints
       'GET /devices/:deviceId/specifications': this.getDeviceSpecifications.bind(this),
       'POST /devices/search': this.searchDevices.bind(this),
+      'GET /jobs/:jobId': this.getJobStatus.bind(this),
       
       // Data endpoints
       'GET /data/latest': this.getLatestData.bind(this),
@@ -118,6 +119,24 @@ export class ScraperRoutes {
       res.status(500).json({
         success: false,
         message: 'Failed to get status',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Get brands from database
+   * @param {Object} req - Request object
+   * @param {Object} res - Response object
+   */
+  async getBrands(req, res) {
+    try {
+      const result = await this.controller.getBrands();
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: 'Failed to get brands',
         error: error.message
       });
     }
@@ -261,11 +280,22 @@ export class ScraperRoutes {
    */
   async getSwaggerUI(req, res) {
     try {
-      const swaggerUiHtml = swaggerUi.generateHTML(swaggerDocument, {
+      // Use swaggerUi.setup to generate HTML
+      const swaggerSetup = swaggerUi.setup(swaggerDocument, {
         customCss: '.swagger-ui .topbar { display: none }',
         customSiteTitle: 'GSM Arena Scraper API Documentation'
       });
-      res.send(swaggerUiHtml);
+      // swaggerUi.setup returns middleware, so we need to call it
+      if (Array.isArray(swaggerSetup)) {
+        swaggerSetup[0](req, res, () => {});
+      } else if (typeof swaggerSetup === 'function') {
+        swaggerSetup(req, res, () => {});
+      } else {
+        res.status(500).json({
+          success: false,
+          message: 'Failed to load Swagger UI - invalid setup'
+        });
+      }
     } catch (error) {
       res.status(500).json({
         success: false,
@@ -287,6 +317,24 @@ export class ScraperRoutes {
       res.status(500).json({
         success: false,
         message: 'Failed to load Swagger JSON',
+        error: error.message
+      });
+    }
+  }
+  /**
+   * Get job status
+   * @param {Object} req
+   * @param {Object} res
+   */
+  async getJobStatus(req, res) {
+    try {
+      const { jobId } = req.params;
+      const result = await this.controller.getJobStatus(jobId);
+      res.status(result.statusCode || 200).json(result);
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: 'Failed to get job status',
         error: error.message
       });
     }

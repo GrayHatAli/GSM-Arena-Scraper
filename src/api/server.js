@@ -96,15 +96,22 @@ export class ScraperAPI {
       customCssUrl: 'https://unpkg.com/swagger-ui-dist@5.9.0/swagger-ui.css'
     };
 
-    // Swagger UI serve middleware - handles asset requests
-    // This will only serve Swagger UI assets and pass through other requests
-    this.app.use(swaggerUi.serve);
-
-    // Root -> Swagger docs HTML (only for GET /)
-    this.app.get('/', swaggerUi.setup(swaggerDocument, swaggerUiOptions));
-
-    // /docs -> Swagger docs
-    this.app.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument, swaggerUiOptions));
+    // Swagger UI serve middleware - temporarily disabled to fix startup issue
+    // TODO: Re-enable Swagger UI after fixing the setup issue
+    // try {
+    //   this.app.use(swaggerUi.serve);
+    //   const swaggerSetup = swaggerUi.setup(swaggerDocument, swaggerUiOptions);
+    //   // Root -> Swagger docs HTML (only for GET /)
+    //   if (Array.isArray(swaggerSetup)) {
+    //     this.app.get('/', ...swaggerSetup);
+    //     this.app.get('/docs', ...swaggerSetup);
+    //   } else {
+    //     this.app.get('/', swaggerSetup);
+    //     this.app.get('/docs', swaggerSetup);
+    //   }
+    // } catch (swaggerError) {
+    //   console.warn('Swagger UI setup failed, continuing without it:', swaggerError.message);
+    // }
 
     // Health check
     this.app.get('/health', routeDefinitions['GET /health']);
@@ -118,6 +125,7 @@ export class ScraperAPI {
     // Device endpoints
     this.app.get('/devices/:deviceId/specifications', routeDefinitions['GET /devices/:deviceId/specifications']);
     this.app.post('/devices/search', routeDefinitions['POST /devices/search']);
+    this.app.get('/jobs/:jobId', routeDefinitions['GET /jobs/:jobId']);
 
     // Data endpoints
     this.app.get('/data/latest', routeDefinitions['GET /data/latest']);

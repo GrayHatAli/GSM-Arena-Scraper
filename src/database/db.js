@@ -2,42 +2,82 @@
  * Database connection management
  */
 
-import pg from 'pg';
+import Database from 'better-sqlite3';
+import fs from 'fs';
+import path from 'path';
 import { logProgress } from '../utils.js';
 
-const { Pool } = pg;
-
+let dbInstance = null;
 let pool = null;
 
+const DEFAULT_DB_NAME = 'gsmarena.sqlite';
+
+function resolveDatabasePath() {
+  const customPath = process.env.SQLITE_DB_PATH;
+  if (customPath) {
+    return path.isAbsolute(customPath) ? customPath : path.join(process.cwd(), customPath);
+  }
+
+  const dataDir = path.join(process.cwd(), 'data');
+  if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir, { recursive: true });
+  }
+  return path.join(dataDir, DEFAULT_DB_NAME);
+}
+
+class SQLitePool {
+  constructor(db) {
+    this.db = db;
+  }
+
+  /**
+   * Execute SQL query with positional parameters.
+   * Mimics pg.Pool.query returning an object with rows array.
+   * @param {string} sql
+   * @param {Array} params
+   * @returns {{rows: Array}}
+   */
+  query(sql, params = []) {
+    const statement = this.db.prepare(sql);
+    const trimmed = sql.trim().toLowerCase();
+
+    if (trimmed.startsWith('select') || trimmed.startsWith('pragma')) {
+      const rows = statement.all(params);
+      return { rows };
+    }
+
+    const result = statement.run(params);
+    return {
+      rows: [],
+      lastInsertRowid: result.lastInsertRowid,
+      changes: result.changes
+    };
+  }
+
+  exec(sql) {
+    return this.db.exec(sql);
+  }
+
+  close() {
+    this.db.close();
+  }
+}
+
 /**
- * Get database connection pool
- * @returns {pg.Pool} Database pool instance
+ * Get database connection pool (SQLite wrapper)
+ * @returns {SQLitePool|null}
  */
 export function getPool() {
   if (!pool) {
-    const databaseUrl = process.env.DATABASE_URL;
-    
-    if (!databaseUrl) {
-      logProgress('DATABASE_URL not set, database operations will be disabled', 'warn');
-      return null;
-    }
-
     try {
-      pool = new Pool({
-        connectionString: databaseUrl,
-        ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
-        max: 20,
-        idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 2000,
-      });
-
-      pool.on('error', (err) => {
-        logProgress(`Unexpected error on idle client: ${err.message}`, 'error');
-      });
-
-      logProgress('Database connection pool created', 'success');
+      const dbPath = resolveDatabasePath();
+      dbInstance = new Database(dbPath);
+      dbInstance.pragma('journal_mode = WAL');
+      dbInstance.pragma('foreign_keys = ON');
+      pool = new SQLitePool(dbInstance);
+      logProgress(`SQLite database opened at ${dbPath}`, 'success');
     } catch (error) {
-      logProgress(`Failed to create database pool: ${error.message}`, 'error');
+      logProgress(`Failed to open SQLite database: ${error.message}`, 'error');
       return null;
     }
   }
@@ -45,22 +85,29 @@ export function getPool() {
   return pool;
 }
 
+export function getDatabase() {
+  if (!dbInstance) {
+    getPool();
+  }
+  return dbInstance;
+}
+
 /**
  * Test database connection
  * @returns {Promise<boolean>} True if connection successful
  */
 export async function testConnection() {
-  const pool = getPool();
-  if (!pool) {
+  const dbPool = getPool();
+  if (!dbPool) {
     return false;
   }
 
   try {
-    const result = await pool.query('SELECT NOW()');
-    logProgress('Database connection test successful', 'success');
+    dbPool.query('SELECT 1');
+    logProgress('SQLite connection test successful', 'success');
     return true;
   } catch (error) {
-    logProgress(`Database connection test failed: ${error.message}`, 'error');
+    logProgress(`SQLite connection test failed: ${error.message}`, 'error');
     return false;
   }
 }
@@ -71,9 +118,10 @@ export async function testConnection() {
  */
 export async function closePool() {
   if (pool) {
-    await pool.end();
+    pool.close();
     pool = null;
-    logProgress('Database connection pool closed', 'info');
+    dbInstance = null;
+    logProgress('SQLite database connection closed', 'info');
   }
 }
 

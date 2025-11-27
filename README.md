@@ -1,3 +1,10 @@
+## 🧵 Background Flow
+
+1. **Startup** – SQLite migrations run automatically and the GSM Arena maker list is cached locally.
+2. **Brand Request (`POST /brands`)** – API checks SQLite for the requested brand + `minYear`. Missing data triggers a background job and returns `202 Accepted` with an ETA.
+3. **Job Queue** – Jobs are persisted in `scrape_jobs`, processed sequentially, and include automatic retries with exponential backoff.
+4. **Job Status (`GET /jobs/:id`)** – Poll job progress while the scraper works in the background.
+5. **Device Specs** – `/devices/:deviceId/specifications` acts the same way: cached lookups first, background jobs otherwise.
 # GSM Arena Scraper
 
 A standalone, production-ready web scraper for GSM Arena mobile phone data with RESTful API.
@@ -5,15 +12,15 @@ A standalone, production-ready web scraper for GSM Arena mobile phone data with 
 ## 🚀 Features
 
 - **Independent Service**: Completely standalone, can be deployed anywhere
-- **RESTful API**: Clean API endpoints for all scraping operations
+- **SQLite Persistence**: All brands, models, specs, and job metadata live in `data/gsmarena.sqlite`
+- **Background Job Queue**: Brand/model/spec scraping happens asynchronously with persistent retry logic
+- **RESTful API**: Clean API endpoints for scraping status, job status, and cached data
 - **Real Data Scraping**: Extracts actual specifications, RAM, Storage, Colors
 - **Flexible Brand Selection**: Choose any brands you want, or scrape all available brands
 - **Optional Year Filtering**: Filter by release year or include all devices regardless of year
 - **Mobile Phones Only**: Excludes tablets, watches, accessories
-- **Rate Limiting**: Respectful scraping with delays
-- **Error Handling**: Comprehensive error management
-- **Docker Support**: Ready for containerized deployment
-- **Health Checks**: Built-in monitoring and health endpoints
+- **Rate Limiting Aware**: Randomized delays (1–5s per spec fetch) to stay under GSM Arena limits
+- **Docker Support & Health Checks**: Ready for containerized deployment with `/health` endpoint
 
 ## 📦 Quick Start
 
@@ -43,81 +50,50 @@ npm start
 # Server runs on http://localhost:3002
 ```
 
-## ⚡ Redis Caching
-
-Repeated brand/device requests are cached for 24 hours to keep latency low.
-
-- Set `REDIS_URL` in your environment (for example `redis://localhost:6379` or a managed Redis URL).
-- On the first request the scraper fetches the data from GSM Arena and stores:
-  - The normalized list of brands.
-  - Each brand response (respecting `minYear`, `modelsPerBrand`, `excludeKeywords`, etc.).
-- Subsequent requests with the same filters are served directly from Redis.
-- If Redis is unreachable or `REDIS_URL` is not set, the API gracefully falls back to live scraping.
+> ℹ️ The first run creates `data/gsmarena.sqlite` automatically and seeds it with the full GSM Arena brand list.
 
 ## 🔌 API Endpoints
 
 ### Health & Status
-- `GET /health` - Health check
-- `GET /status` - Current scraping status
+- `GET /health` – Health check
+- `GET /status` – Current scraping status
 
-### Brands
-- `GET /brands` - Get available brands
-- `POST /brands/scrape` - Scrape brands (all brands if none specified)
-- `POST /brands/:brandName/scrape` - Scrape brand models
+### Brands & Jobs
+- `GET /brands` – List cached brands with stored models
+- `POST /brands` – Request brand data (queues background jobs if data is missing)
+- `GET /jobs/:jobId` – Check background job status
 
-### Data
-- `GET /data/latest` - Get latest scraped data
-- `POST /data/save` - Save data
+### Devices
+- `GET /devices/:deviceId/specifications` – Retrieve cached specs or enqueue a fetch job
+- `POST /devices/search` – Search locally cached devices
 
 ## 📡 API Examples
 
-### Scrape All Brands (No Filtering)
+### Request Brand Data
 ```bash
-curl -X POST http://localhost:3002/brands/scrape \
-  -H "Content-Type: application/json" \
-  -d '{}'
-```
-
-### Scrape All Brands with Year Filter
-```bash
-curl -X POST http://localhost:3002/brands/scrape \
-  -H "Content-Type: application/json" \
-  -d '{
-    "options": {
-      "minYear": 2022
-    }
-  }'
-```
-
-### Scrape Specific Brands Only
-```bash
-curl -X POST http://localhost:3002/brands/scrape \
-  -H "Content-Type: application/json" \
-  -d '{
-    "brands": ["apple", "samsung", "xiaomi"],
-    "options": {
-      "minYear": 2020
-    }
-  }'
-```
-
-### Scrape Limited Models Per Brand
-```bash
-curl -X POST http://localhost:3002/brands/scrape \
+curl -X POST http://localhost:3002/brands \
   -H "Content-Type: application/json" \
   -d '{
     "brands": ["apple", "samsung"],
-    "options": {
-      "modelsPerBrand": 5,
-      "minYear": 2022
-    }
+    "options": { "minYear": 2024 }
   }'
 ```
 
-### Get Latest Data
+- If data exists → models are returned immediately from SQLite
+- If data is missing → response includes `statusCode: 202` plus queued job IDs
+
+### Check Job Status
 ```bash
-curl http://localhost:3002/data/latest
+curl http://localhost:3002/jobs/12
 ```
+
+### Retrieve Device Specifications
+```bash
+curl http://localhost:3002/devices/13964/specifications
+```
+
+- If cached → specs returned instantly
+- If missing → background job scheduled; response includes `jobId`
 
 ## 📊 Response Format
 
@@ -126,36 +102,48 @@ The API returns data in a simple, standardized format:
 ```json
 {
   "success": true,
+  "message": "Brand data retrieved from database",
+  "statusCode": 200,
   "data": {
     "brands": [
       {
         "name": "apple",
-        "displayName": "Apple",
         "models": [
           {
-            "name": "iPhone 16 Pro Max",
-            "specifications": {
-              "battery": "4422 mAh",
-              "display": "6.7 inches",
-              "os": "iOS 18",
-              "processor": "A18 Pro"
-            },
-            "variants": [
-              {
-                "ram": 8,
-                "storage": 256,
-                "colors": ["Natural Titanium", "Blue Titanium"]
-              }
-            ]
+            "model_name": "iPhone 17 Pro Max",
+            "series": "iPhone",
+            "release_date": "Released 2025, September 09",
+            "device_id": 13964,
+            "device_url": "https://www.gsmarena.com/apple_iphone_17_pro_max-13964.php",
+            "image_url": "https://fdn2.gsmarena.com/vv/bigpic/apple-iphone-17-pro-max.jpg"
           }
         ]
       }
     ],
-    "scrapedAt": "2024-10-22T17:00:00.000Z",
-    "totalBrands": 9,
-    "totalModels": 15
-  },
-  "message": "Scraping completed successfully"
+    "total_brands": 1,
+    "total_models": 4,
+    "minYear": 2024
+  }
+}
+```
+
+If data is missing the response looks like:
+
+```json
+{
+  "success": true,
+  "message": "Data is being fetched. Estimated completion time is based on the number of models per brand. Please retry after the suggested interval.",
+  "statusCode": 202,
+  "data": {
+    "pending": [
+      {
+        "brand": "samsung",
+        "jobId": 18,
+        "eta_minutes": 6
+      }
+    ],
+    "minYear": 2024
+  }
 }
 ```
 
@@ -179,31 +167,21 @@ The scraper now supports flexible filtering options that can be customized per r
 
 ### Example Combinations
 ```bash
-# Scrape everything (all brands, all models, all years)
-curl -X POST http://localhost:3002/brands/scrape -d '{}'
-
-# Scrape only Apple and Samsung from 2020 onwards
-curl -X POST http://localhost:3002/brands/scrape -d '{
-  "brands": ["apple", "samsung"],
-  "options": {
-    "minYear": 2020
-  }
+# Request everything (all models, all years) for Apple & Samsung
+curl -X POST http://localhost:3002/brands -d '{
+  "brands": ["apple", "samsung"]
 }'
 
-# Scrape all brands but only recent devices
-curl -X POST http://localhost:3002/brands/scrape -d '{
-  "options": {
-    "minYear": 2023
-  }
+# Request Apple/Samsung from 2020 onwards
+curl -X POST http://localhost:3002/brands -d '{
+  "brands": ["apple", "samsung"],
+  "options": { "minYear": 2020 }
 }'
 
-# Scrape specific brands with limited models per brand
-curl -X POST http://localhost:3002/brands/scrape -d '{
-  "brands": ["apple", "samsung"],
-  "options": {
-    "modelsPerBrand": 5,
-    "minYear": 2022
-  }
+# Request Xiaomi/Google recent devices only
+curl -X POST http://localhost:3002/brands -d '{
+  "brands": ["xiaomi", "google"],
+  "options": { "minYear": 2023 }
 }'
 ```
 
@@ -217,8 +195,10 @@ PORT=3002
 HOST=0.0.0.0
 NODE_ENV=production
 
+# Database (Optional)
+SQLITE_DB_PATH=./data/gsmarena.sqlite
+
 # Scraping Configuration (Optional)
-# MIN_YEAR=2022  # Set to filter by year, leave unset for no year filtering
 MODELS_PER_BRAND=10
 REQUEST_DELAY=1000
 ```
@@ -249,7 +229,7 @@ const axios = require('axios');
 async function getGSMData() {
   try {
     // Scrape all brands and all models without year filtering
-    const response = await axios.post('http://your-scraper-host:3002/brands/scrape', {
+    const response = await axios.post('http://your-scraper-host:3002/brands', {
       brands: ['apple', 'samsung', 'xiaomi'], // Optional: specify brands
       options: { 
         minYear: 2022 // Optional: filter by year
@@ -270,7 +250,7 @@ import requests
 def get_gsm_data():
     try:
         # Scrape all brands and all models without year filtering
-        response = requests.post('http://your-scraper-host:3002/brands/scrape', 
+        response = requests.post('http://your-scraper-host:3002/brands', 
                                 json={
                                     'brands': ['apple', 'samsung', 'xiaomi'],  # Optional: specify brands
                                     'options': {
@@ -303,7 +283,7 @@ function getGSMData() {
     ];
     
     $context = stream_context_create($options);
-    $result = file_get_contents('http://your-scraper-host:3002/brands/scrape', false, $context);
+    $result = file_get_contents('http://your-scraper-host:3002/brands', false, $context);
     return json_decode($result, true);
 }
 ?>
@@ -331,8 +311,8 @@ npm install
 # Start in development mode
 npm run dev
 
-# Run tests
-npm test
+# Run smoke test (runs migrations + brand sync)
+npm run db:test
 ```
 
 ### Project Structure
