@@ -67,7 +67,7 @@ export class ScraperRoutes {
       
       // Brand endpoints
       'GET /brands': this.getBrands.bind(this),
-      'POST /brands': this.scrapeBrands.bind(this),
+      'POST /brands/:brandName/devices': this.getBrandDevices.bind(this),
       
       // Device endpoints
       'GET /devices/:deviceId/specifications': this.getDeviceSpecifications.bind(this),
@@ -341,6 +341,33 @@ export class ScraperRoutes {
       res.status(500).json({
         success: false,
         message: 'Failed to get jobs list',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Get devices for a specific brand
+   * @param {Object} req - Request object
+   * @param {Object} res - Response object
+   */
+  async getBrandDevices(req, res) {
+    try {
+      const { brandName } = req.params;
+      const { options = {} } = req.body;
+      
+      const result = await this.controller.getBrandDevices(brandName, options);
+      
+      // Set appropriate HTTP status code based on result
+      if (result.success === false) {
+        res.status(result.statusCode || 400).json(result);
+      } else {
+        res.status(result.statusCode || 200).json(result);
+      }
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: 'Failed to get brand devices',
         error: error.message
       });
     }

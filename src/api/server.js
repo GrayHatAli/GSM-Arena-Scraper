@@ -120,7 +120,7 @@ export class ScraperAPI {
 
     // Brand endpoints
     this.app.get('/brands', routeDefinitions['GET /brands']);
-    this.app.post('/brands', routeDefinitions['POST /brands']);
+    this.app.post('/brands/:brandName/devices', routeDefinitions['POST /brands/:brandName/devices']);
 
     // Device endpoints
     this.app.get('/devices/:deviceId/specifications', routeDefinitions['GET /devices/:deviceId/specifications']);
@@ -161,7 +161,8 @@ export class ScraperAPI {
       console.log(`📚 API Documentation:`);
       console.log(`   GET  /health - Health check`);
       console.log(`   GET  /status - Get scraping status`);
-      console.log(`   POST /brands - Scrape brands (includes search and filter parameters)`);
+      console.log(`   GET  /brands - Get brands (scrapes if DB empty)`);
+      console.log(`   POST /brands/:brandName/devices - Get devices for a brand`);
       console.log(`   GET  /devices/:deviceId/specifications - Get device specifications`);
       console.log(`   POST /devices/search - Search devices (with filters and deviceId)`);
       console.log(`   GET  /data/latest - Get latest data`);

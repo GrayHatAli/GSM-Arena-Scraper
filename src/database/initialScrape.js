@@ -1,6 +1,6 @@
 /**
- * Initial scraping logic to populate database with brands and models
- * This runs on startup to ensure database is populated
+ * Initial scraping logic to populate database with brands (name + URL only)
+ * This runs on startup to ensure database is populated with brand list
  */
 
 import { ScraperService } from '../services/ScraperService.js';
@@ -28,7 +28,7 @@ export async function needsInitialScrape() {
 
 /**
  * Run initial scraping to populate database
- * This scrapes all brands and their models (without specifications)
+ * This scrapes all brands (name + URL only, no models)
  * @returns {Promise<boolean>} True if scraping completed successfully
  */
 export async function runInitialScrape() {
@@ -77,6 +77,7 @@ export async function runInitialScrape() {
       const allBrands = await scraperService.getAllBrands();
       logProgress(`Found ${allBrands.length} brands`, 'success');
 
+      // Save only brand_name and brand_url to database
       for (const brand of allBrands) {
         await db.saveBrand({
           name: brand.name,

@@ -5,6 +5,7 @@ import { ResponseHelper } from '../utils/ResponseHelper.js';
 import * as db from '../database/models.js';
 import { CONFIG } from '../config/config.js';
 import { enqueueBrandScrape, enqueueDeviceSpecs, getJob, getJobs } from '../jobs/index.js';
+import { logProgress } from '../utils.js';
 
 export class ScraperController {
   constructor() {
@@ -105,6 +106,63 @@ export class ScraperController {
   }
 
   /**
+   * Get devices for a specific brand
+   * @param {string} brandName - Brand name
+   * @param {Object} options - Scraping options (minYear, etc.)
+   * @returns {Object} - Devices result
+   */
+  async getBrandDevices(brandName, options = {}) {
+    try {
+      const minYear = options.minYear ? parseInt(options.minYear, 10) : null;
+      const normalizedBrandName = brandName.toLowerCase();
+
+      // Check if models exist in database for this brand
+      const models = await db.getModelsForBrandAndYear(normalizedBrandName, minYear);
+      
+      if (models.length > 0) {
+        // Data exists in database, return it
+        return ResponseHelper.success('Brand devices retrieved from database', {
+          brand: normalizedBrandName,
+          models: models.map(model => ({
+            model_name: model.model_name,
+            series: model.series,
+            release_date: model.release_date,
+            device_id: model.device_id,
+            device_url: model.device_url,
+            image_url: model.image_url
+          })),
+          total_models: models.length,
+          minYear
+        });
+      }
+
+      // Data not in database, enqueue job
+      const brandMeta = await db.getBrandByName(normalizedBrandName);
+      if (!brandMeta) {
+        return ResponseHelper.error(`Brand '${brandName}' not found in database. Please ensure brands are synced first.`);
+      }
+
+      const estimatedModels = brandMeta?.estimated_models || CONFIG.MODELS_PER_BRAND || 25;
+      const averageSecondsPerModel = 4; // includes random 1-5s delays
+      const etaMinutes = Math.max(1, Math.ceil((estimatedModels * averageSecondsPerModel) / 60));
+
+      const job = await enqueueBrandScrape(normalizedBrandName, { minYear });
+      
+      return ResponseHelper.accepted(
+        'Data is being fetched. Estimated completion time is based on the number of models to be extracted. Please retry after the suggested interval.',
+        {
+          brand: normalizedBrandName,
+          jobId: job?.id,
+          eta_minutes: etaMinutes,
+          minYear
+        }
+      );
+    } catch (error) {
+      return ResponseHelper.error('Failed to get brand devices', error.message);
+    }
+  }
+
+  /**
    * Scrape all brands
    * @param {Object} options - Scraping options
    * @returns {Object} - Scraping result
@@ -176,36 +234,50 @@ export class ScraperController {
   }
 
   /**
-   * Get brands from database
+   * Get brands from database or scrape if empty
    * @param {Object} options - Query options
-   * @returns {Object} - List of brands with models
+   * @returns {Object} - List of brands (name and URL only)
    */
   async getBrands(options = {}) {
     try {
-      const brands = await db.getBrands(options);
+      // Check if brands table is empty
+      const existingBrands = await db.getBrands(options);
       
-      // For each brand, get its models
-      const brandsWithModels = await Promise.all(
-        brands.map(async (brand) => {
-          const models = await db.getModelsByBrandId(brand.id);
-          return {
-            ...brand,
-            models: models.map(model => ({
-              model_name: model.model_name,
-              series: model.series,
-              release_date: model.release_date,
-              device_id: model.device_id,
-              device_url: model.device_url,
-              image_url: model.image_url
-            }))
-          };
-        })
-      );
+      if (existingBrands.length === 0) {
+        // Database is empty, scrape brands from site
+        logProgress('Brands table is empty, scraping brands from site...', 'info');
+        const scrapedBrands = await this.scraperService.getAllBrands();
+        
+        // Save only brand_name and brand_url to database
+        for (const brand of scrapedBrands) {
+          await db.saveBrand({
+            name: brand.name,
+            display_name: brand.display_name || brand.name,
+            url: brand.url || null,
+            is_active: brand.is_active !== undefined ? brand.is_active : true,
+            estimated_models: brand.estimated_models || 0
+          });
+        }
+        
+        logProgress(`Scraped and saved ${scrapedBrands.length} brands to database`, 'success');
+        
+        // Return scraped brands with only name and URL
+        return ResponseHelper.success('Brands scraped and saved successfully', {
+          brands: scrapedBrands.map(brand => ({
+            brand_name: brand.display_name || brand.name,
+            brand_url: brand.url
+          })),
+          total_brands: scrapedBrands.length
+        });
+      }
       
+      // Database has brands, read from database
       return ResponseHelper.success('Retrieved brands successfully', {
-        brands: brandsWithModels,
-        total_brands: brandsWithModels.length,
-        total_models: brandsWithModels.reduce((total, brand) => total + (brand.models?.length || 0), 0)
+        brands: existingBrands.map(brand => ({
+          brand_name: brand.display_name || brand.name,
+          brand_url: brand.url
+        })),
+        total_brands: existingBrands.length
       });
     } catch (error) {
       return ResponseHelper.error('Failed to get brands', error.message);
