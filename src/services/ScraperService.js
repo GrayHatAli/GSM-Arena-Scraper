@@ -4,7 +4,7 @@
  */
 
 import axios from 'axios';
-import { logProgress } from '../utils.js';
+import { logProgress, delay } from '../utils/ScraperUtils.js';
 import { CONFIG } from '../config/config.js';
 import * as db from '../database/models.js';
 
@@ -32,15 +32,6 @@ export class ScraperService {
   }
 
   /**
-   * Helper function to add delay between requests
-   * @param {number} ms - Milliseconds to delay
-   * @returns {Promise} - Promise that resolves after the delay
-   */
-  async delay(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-  }
-
-  /**
    * Make HTTP request with retry logic and exponential backoff
    * @param {Function} requestFn - Function that returns a promise for the HTTP request
    * @param {number} maxRetries - Maximum number of retries (default: 3)
@@ -59,7 +50,7 @@ export class ScraperService {
           // Exponential backoff: 2s, 4s, 8s, etc.
           const delay = baseDelay * Math.pow(2, attempt - 1);
           logProgress(`Retry attempt ${attempt}/${maxRetries} after ${delay}ms delay`, 'warning');
-          await this.delay(delay);
+          await delay(delay);
         }
         
         // Reset the flag before making the request
@@ -100,7 +91,7 @@ export class ScraperService {
           }
           
           // Delay here for 429 errors to avoid double delay in next iteration
-          await this.delay(delay);
+          await delay(delay);
           alreadyDelayed = true; // Mark to skip delay in next iteration
         } else {
           logProgress(`Request failed (${error.response?.status || error.code}), will retry...`, 'warning');
@@ -239,7 +230,7 @@ export class ScraperService {
       logProgress('Getting available brands...', 'info');
       
       // Add longer delay before request to avoid rate limiting (especially on startup)
-      await this.delay(10000); // 10 seconds initial delay
+      await delay(10000);
       
       try {
         // Use retry logic for rate limit errors with more retries and longer delays
@@ -456,7 +447,7 @@ export class ScraperService {
       
       // Add random delay to avoid detection
       const randomDelay = Math.floor(Math.random() * 3000) + 2000; // 2-5 seconds
-      await this.delay(randomDelay);
+      await delay(randomDelay);
       
       // Build search URL using GSM Arena search API
       // Format: https://www.gsmarena.com/results.php3?nYearMin=2023&sMakers=48
@@ -731,7 +722,7 @@ export class ScraperService {
             
             // Add delay between batches
             if (i + batchSize < devicesWithoutYear.length) {
-              await this.delay(1000);
+              await delay(1000);
             }
           }
         }
@@ -934,7 +925,7 @@ export class ScraperService {
             }));
             
             if (i + batchSize < devicesWithoutYear.length) {
-              await this.delay(1000);
+              await delay(1000);
             }
           }
         }
@@ -966,7 +957,7 @@ export class ScraperService {
     try {
       const url = deviceUrl.startsWith('http') ? deviceUrl : this.baseUrl + '/' + deviceUrl;
       // Increased delay to avoid rate limiting
-      await this.delay(2000);
+      await delay(2000);
       
       // Use retry logic for rate limit errors
       const response = await this.makeRequestWithRetry(
@@ -1141,7 +1132,7 @@ export class ScraperService {
     try {
       const url = deviceUrl.startsWith('http') ? deviceUrl : this.baseUrl + '/' + deviceUrl;
       // Increased delay to avoid rate limiting
-      await this.delay(4000);
+      await delay(4000);
       
       // Use retry logic for rate limit errors
       const response = await this.makeRequestWithRetry(
@@ -1212,7 +1203,7 @@ export class ScraperService {
       
       // Add random delay to avoid detection
       const randomDelay = Math.floor(Math.random() * 4000) + 1000; // 1-5 seconds
-      await this.delay(randomDelay);
+      await delay(randomDelay);
       
       // Get the device page
       const deviceUrl = device.url.startsWith('http') ? device.url : this.baseUrl + '/' + device.url;
@@ -1479,7 +1470,7 @@ export class ScraperService {
           // If still no release year, try to get it from device page Status field (Released date)
           if (!releaseYear) {
             try {
-              await this.delay(2000); // Add delay before request
+              await delay(2000);
               const releasedDate = await this.getDeviceReleased(device.url);
               if (releasedDate) {
                 const extractedYear = this.extractYearFromReleaseSnippet(releasedDate);
@@ -1507,7 +1498,7 @@ export class ScraperService {
           });
           
           // Add delay between device processing (increased to avoid rate limiting)
-          await this.delay(CONFIG.DELAYS.between_requests || 5000);
+          await delay(CONFIG.DELAYS.between_requests || 5000);
         } catch (error) {
           logProgress(`  Error processing device ${device.name}: ${error.message}`, 'error');
           // Add fallback model data with minimal info
@@ -1658,7 +1649,7 @@ export class ScraperService {
         results.push(brandData);
         
         // Add delay between brand scraping
-        await this.delay(CONFIG.DELAYS.between_brands || 3000);
+        await delay(CONFIG.DELAYS.between_brands || 3000);
       }
       
       return {

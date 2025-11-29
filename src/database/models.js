@@ -3,7 +3,7 @@
  */
 
 import { getDatabase } from './db.js';
-import { logProgress } from '../utils.js';
+import { logProgress } from '../utils/ScraperUtils.js';
 
 function normalizeBrandName(name = '') {
   return name.trim().toLowerCase();

@@ -5,7 +5,7 @@ import { ResponseHelper } from '../utils/ResponseHelper.js';
 import * as db from '../database/models.js';
 import { CONFIG } from '../config/config.js';
 import { enqueueBrandScrape, enqueueDeviceSpecs, getJob, getJobs } from '../jobs/index.js';
-import { logProgress } from '../utils.js';
+import { logProgress } from '../utils/ScraperUtils.js';
 
 export class ScraperController {
   constructor() {

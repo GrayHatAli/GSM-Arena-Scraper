@@ -1,5 +1,5 @@
 import { getDatabase } from '../database/db.js';
-import { logProgress } from '../utils.js';
+import { logProgress } from '../utils/ScraperUtils.js';
 
 const STATUS = {
   PENDING: 'pending',

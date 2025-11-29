@@ -1,55 +1,11 @@
-// API Server for GSM Arena Scraper
-
 import express from 'express';
 import cors from 'cors';
 import swaggerUi from 'swagger-ui-express';
 import { ScraperRoutes } from '../routes/scraperRoutes.js';
 import { CONFIG } from '../config/config.js';
-import { parse } from 'yaml';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import { readFileSync, existsSync } from 'fs';
+import { getSwaggerDocument } from '../utils/SwaggerHelper.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const swaggerPathCandidates = [
-  path.join(__dirname, '../../swagger.yaml'),
-  path.resolve(process.cwd(), 'swagger.yaml'),
-  path.resolve(process.cwd(), 'src/swagger.yaml')
-];
-
-const swaggerPath = swaggerPathCandidates.find((candidate) => existsSync(candidate));
-
-let swaggerDocument;
-
-if (swaggerPath) {
-  try {
-    swaggerDocument = parse(readFileSync(swaggerPath, 'utf8'));
-  } catch (error) {
-    console.error('Failed to parse swagger.yaml. Using fallback document. Error:', error.message);
-    swaggerDocument = null;
-  }
-} else {
-  swaggerDocument = null;
-}
-
-if (!swaggerDocument) {
-  swaggerDocument = {
-    openapi: '3.0.0',
-    info: {
-      title: 'GSM Arena Scraper API',
-      description:
-        'swagger.yaml is missing; using minimal fallback schema. Ensure swagger.yaml is deployed for full documentation.',
-      version: '1.0.0'
-    },
-    paths: {}
-  };
-  console.warn(
-    'swagger.yaml not found. Checked paths:',
-    swaggerPathCandidates,
-    'Using fallback Swagger document.'
-  );
-}
+const swaggerDocument = getSwaggerDocument();
 
 export class ScraperAPI {
   constructor() {
@@ -61,31 +17,21 @@ export class ScraperAPI {
     this.setupRoutes();
   }
 
-  /**
-   * Setup middleware
-   */
   setupMiddleware() {
     this.app.use(cors());
     this.app.use(express.json({ limit: '50mb' }));
     this.app.use(express.urlencoded({ extended: true }));
-    
-    // Request logging
     this.app.use((req, res, next) => {
       console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
       next();
     });
   }
 
-  /**
-   * Setup routes
-   */
   setupRoutes() {
     const routeDefinitions = this.routes.getRoutes();
 
-    // Swagger JSON endpoint (must be before Swagger UI middleware)
     this.app.get('/swagger.json', routeDefinitions['GET /swagger.json']);
 
-    // Swagger UI setup with middleware - use CDN for assets (works better on Vercel)
     const swaggerUiOptions = {
       customCss: '.swagger-ui .topbar { display: none }',
       customSiteTitle: 'GSM Arena Scraper API Documentation',
@@ -96,43 +42,27 @@ export class ScraperAPI {
       customCssUrl: 'https://unpkg.com/swagger-ui-dist@5.9.0/swagger-ui.css'
     };
 
-    // Swagger UI setup - serve static assets and setup UI
     try {
-      // swaggerUi.serve serves the static assets (CSS, JS) needed for Swagger UI
       this.app.use('/docs', swaggerUi.serve);
       this.app.use('/', swaggerUi.serve);
-      
-      // swaggerUi.setup returns middleware that renders the Swagger UI HTML
       const swaggerSetup = swaggerUi.setup(swaggerDocument, swaggerUiOptions);
-      
-      // Apply the setup middleware to both routes
       this.app.get('/docs', swaggerSetup);
       this.app.get('/', swaggerSetup);
     } catch (swaggerError) {
       console.warn('Swagger UI setup failed, continuing without it:', swaggerError.message);
     }
 
-    // Health check
     this.app.get('/health', routeDefinitions['GET /health']);
-
-    // Status endpoints
     this.app.get('/status', routeDefinitions['GET /status']);
-
-    // Brand endpoints
     this.app.get('/brands', routeDefinitions['GET /brands']);
     this.app.post('/brands/:brandName/devices', routeDefinitions['POST /brands/:brandName/devices']);
-
-    // Device endpoints
     this.app.get('/devices/:deviceId/specifications', routeDefinitions['GET /devices/:deviceId/specifications']);
     this.app.post('/devices/search', routeDefinitions['POST /devices/search']);
     this.app.get('/jobs', routeDefinitions['GET /jobs']);
     this.app.get('/jobs/:jobId', routeDefinitions['GET /jobs/:jobId']);
-
-    // Data endpoints
     this.app.get('/data/latest', routeDefinitions['GET /data/latest']);
     this.app.post('/data/save', routeDefinitions['POST /data/save']);
 
-    // 404 handler
     this.app.use('*', (req, res) => {
       res.status(404).json({
         success: false,
@@ -141,7 +71,6 @@ export class ScraperAPI {
       });
     });
 
-    // Error handler
     this.app.use((error, req, res, next) => {
       console.error('API Error:', error);
       res.status(500).json({
@@ -152,9 +81,6 @@ export class ScraperAPI {
     });
   }
 
-  /**
-   * Start the server
-   */
   start() {
     this.app.listen(this.port, this.host, () => {
       console.log(`🚀 GSM Arena Scraper API running on http://${this.host}:${this.port}`);
@@ -173,9 +99,6 @@ export class ScraperAPI {
     });
   }
 
-  /**
-   * Stop the server
-   */
   stop() {
     if (this.server) {
       this.server.close();
@@ -184,7 +107,6 @@ export class ScraperAPI {
   }
 }
 
-// Start server if called directly
 if (import.meta.url === `file://${process.argv[1]}`) {
   const api = new ScraperAPI();
   api.start();

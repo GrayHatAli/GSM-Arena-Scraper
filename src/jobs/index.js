@@ -1,7 +1,7 @@
 import { JobQueue } from './JobQueue.js';
 import { ScraperService } from '../services/ScraperService.js';
 import * as db from '../database/models.js';
-import { logProgress } from '../utils.js';
+import { logProgress } from '../utils/ScraperUtils.js';
 
 const scraperService = new ScraperService();
 const jobQueue = new JobQueue();

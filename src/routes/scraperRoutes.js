@@ -1,52 +1,7 @@
-// Scraper Routes - API endpoints
-
 import { ScraperController } from '../controllers/ScraperController.js';
-import swaggerUi from 'swagger-ui-express';
-import { parse } from 'yaml';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import { readFileSync, existsSync } from 'fs';
+import { getSwaggerDocument } from '../utils/SwaggerHelper.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const swaggerPathCandidates = [
-  path.join(__dirname, '../../swagger.yaml'),
-  path.resolve(process.cwd(), 'swagger.yaml'),
-  path.resolve(process.cwd(), 'src/swagger.yaml')
-];
-
-const swaggerPath = swaggerPathCandidates.find((candidate) => existsSync(candidate));
-
-let swaggerDocument;
-
-if (swaggerPath) {
-  try {
-    swaggerDocument = parse(readFileSync(swaggerPath, 'utf8'));
-  } catch (error) {
-    console.error('Failed to parse swagger.yaml. Using fallback document. Error:', error.message);
-    swaggerDocument = null;
-  }
-} else {
-  swaggerDocument = null;
-}
-
-if (!swaggerDocument) {
-  swaggerDocument = {
-    openapi: '3.0.0',
-    info: {
-      title: 'GSM Arena Scraper API',
-      description:
-        'swagger.yaml is missing; using minimal fallback schema. Ensure swagger.yaml is deployed for full documentation.',
-      version: '1.0.0'
-    },
-    paths: {}
-  };
-  console.warn(
-    'swagger.yaml not found. Checked paths:',
-    swaggerPathCandidates,
-    'Using fallback Swagger document.'
-  );
-}
+const swaggerDocument = getSwaggerDocument();
 
 export class ScraperRoutes {
   constructor() {
@@ -59,27 +14,16 @@ export class ScraperRoutes {
    */
   getRoutes() {
     return {
-      // Health check
       'GET /health': this.healthCheck.bind(this),
-      
-      // Status endpoints
       'GET /status': this.getStatus.bind(this),
-      
-      // Brand endpoints
       'GET /brands': this.getBrands.bind(this),
       'POST /brands/:brandName/devices': this.getBrandDevices.bind(this),
-      
-      // Device endpoints
       'GET /devices/:deviceId/specifications': this.getDeviceSpecifications.bind(this),
       'POST /devices/search': this.searchDevices.bind(this),
       'GET /jobs/:jobId': this.getJobStatus.bind(this),
       'GET /jobs': this.getJobsList.bind(this),
-      
-      // Data endpoints
       'GET /data/latest': this.getLatestData.bind(this),
       'POST /data/save': this.saveData.bind(this),
-      
-      // Documentation endpoints
       'GET /docs': this.getSwaggerUI.bind(this),
       'GET /swagger.json': this.getSwaggerJSON.bind(this)
     };
@@ -153,11 +97,8 @@ export class ScraperRoutes {
     try {
       const { brands, options = {} } = req.body;
       
-      // brands is now optional - if not provided or empty array, treat as undefined to scrape all brands
       const brandsToScrape = (brands && Array.isArray(brands) && brands.length > 0) ? brands : undefined;
       const result = await this.controller.scrapeBrands(brandsToScrape, options);
-      
-      // Set appropriate HTTP status code based on result
       if (result.success === false) {
         res.status(result.statusCode || 400).json(result);
       } else {
@@ -179,11 +120,10 @@ export class ScraperRoutes {
    */
   async getLatestData(req, res) {
     try {
-      // This would typically read from a database or file
       res.json({
         success: true,
         message: 'Latest data retrieved',
-        data: null // Placeholder
+        data: null
       });
     } catch (error) {
       res.status(500).json({
@@ -211,7 +151,6 @@ export class ScraperRoutes {
         });
       }
 
-      // This would typically save to a database or file
       res.json({
         success: true,
         message: 'Data saved successfully',
@@ -275,15 +214,7 @@ export class ScraperRoutes {
     }
   }
 
-  /**
-   * Get Swagger UI
-   * This method is kept for backward compatibility but Swagger UI is now handled directly in server.js
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
-   */
   async getSwaggerUI(req, res) {
-    // Swagger UI is handled by middleware in server.js
-    // This method should not be called, but if it is, redirect to /docs
     res.redirect('/docs');
   }
 

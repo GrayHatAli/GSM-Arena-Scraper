@@ -1,5 +1,3 @@
-// Scraper Utilities - Helper functions for scraping
-
 import fs from 'fs/promises';
 import path from 'path';
 
@@ -47,13 +45,11 @@ export const saveToFile = async (data, filePath) => {
  * @returns {number|null} - Extracted year or null
  */
 export const extractYear = (modelName, url) => {
-  // Try to extract from model name first
   const nameMatch = modelName.match(/(\d{4})/);
   if (nameMatch) {
     return parseInt(nameMatch[1]);
   }
 
-  // Try to extract from URL
   const urlMatch = url.match(/(\d{4})/);
   if (urlMatch) {
     return parseInt(urlMatch[1]);
@@ -79,10 +75,9 @@ export const shouldExcludeDevice = (modelName, excludeKeywords) => {
  * @returns {Object} - RAM and Storage options
  */
 export const extractRamStorageOptions = (specs) => {
-  let ramOptions = [6, 8]; // default
-  let storageOptions = [128, 256]; // default
+  let ramOptions = [6, 8];
+  let storageOptions = [128, 256];
 
-  // Extract RAM
   if (specs['RAM'] || specs['Memory']) {
     const ramSpec = specs['RAM'] || specs['Memory'];
     const ramMatch = ramSpec.match(/(\d+)\s*GB/i);
@@ -92,7 +87,6 @@ export const extractRamStorageOptions = (specs) => {
     }
   }
 
-  // Extract Storage
   if (specs['Internal'] || specs['Storage']) {
     const storageSpec = specs['Internal'] || specs['Storage'];
     const storageMatch = storageSpec.match(/(\d+)\s*GB/i);
@@ -115,8 +109,6 @@ export const extractRamStorageOptions = (specs) => {
  */
 export const formatSpecifications = (rawSpecs) => {
   const formatted = {};
-  
-  // Important specifications to keep
   const importantSpecs = [
     'Battery', 'Main Camera', 'Selfie camera', 'Display', 
     'Chipset', 'Weight', 'OS', 'Display type', 'RAM',

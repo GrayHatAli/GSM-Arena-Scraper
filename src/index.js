@@ -1,5 +1,3 @@
-// GSM Arena Scraper - Main Entry Point
-
 import { ScraperAPI } from './api/server.js';
 import { ScraperAPIClient } from './api/client.js';
 import { ScraperController } from './controllers/ScraperController.js';
@@ -7,16 +5,11 @@ import { CONFIG } from './config/config.js';
 import { runInitialScrapeInBackground } from './database/initialScrape.js';
 import { startJobQueue } from './jobs/index.js';
 
-/**
- * Start API Server
- */
 async function startServer() {
   try {
     console.log('🚀 Starting GSM Arena Scraper API Server...');
     const api = new ScraperAPI();
     api.start();
-    
-    // Run initial scrape in background (non-blocking)
     console.log('📊 Starting initial database population in background...');
     runInitialScrapeInBackground();
     startJobQueue();
@@ -26,13 +19,9 @@ async function startServer() {
   }
 }
 
-/**
- * Run CLI scraping
- */
 async function runCLI() {
   try {
     console.log('🚀 Starting GSM Arena Scraper CLI...');
-    
     const controller = new ScraperController();
     const result = await controller.scrapeAll();
     
@@ -52,39 +41,26 @@ async function runCLI() {
   }
 }
 
-/**
- * Test API Client
- */
 async function testAPI() {
   try {
     console.log('🧪 Testing API Client...');
-    
     const client = new ScraperAPIClient();
-    
-    // Wait for server
     await client.waitForServer();
     
-    // Test health check
     const health = await client.healthCheck();
     console.log('✅ Health check:', health.message);
     
-    // Test status
     const status = await client.getStatus();
     console.log('✅ Status:', status.data);
     
-    // Test device search
     const searchResult = await client.searchDevices({ brand_name: 'apple' });
     console.log(`✅ Device search: Found ${searchResult.data?.devices?.length || 0} devices`);
-    
     console.log('🎉 API Client test completed successfully!');
-    
   } catch (error) {
     console.error('❌ API Client test failed:', error.message);
     process.exit(1);
   }
 }
-
-// Parse command line arguments
 const command = process.argv[2] || 'cli';
 
 switch (command) {

@@ -4,7 +4,7 @@
 
 import { getPool } from './db.js';
 import { SCHEMA } from './schema.js';
-import { logProgress } from '../utils.js';
+import { logProgress } from '../utils/ScraperUtils.js';
 
 /**
  * Run all migrations

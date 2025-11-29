@@ -7,7 +7,7 @@ import { ScraperService } from '../services/ScraperService.js';
 import * as db from './models.js';
 import { runMigrations } from './migrations.js';
 import { testConnection } from './db.js';
-import { logProgress } from '../utils.js';
+import { logProgress } from '../utils/ScraperUtils.js';
 
 let isScraping = false;
 let scrapePromise = null;

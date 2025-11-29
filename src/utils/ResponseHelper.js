@@ -1,5 +1,3 @@
-// Response Helper - Standardized API responses
-
 export class ResponseHelper {
   /**
    * Create success response
