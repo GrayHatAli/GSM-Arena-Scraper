@@ -1078,7 +1078,6 @@ export class ScraperService {
   async getDeviceReleased(deviceUrl) {
     try {
       const url = deviceUrl.startsWith('http') ? deviceUrl : this.baseUrl + '/' + deviceUrl;
-      await delay(2000);
       
       const response = await this.makeRequestWithRetry(
         () => this.apiClient.get(url),
