@@ -47,10 +47,9 @@ export class ScraperService {
         // Delay before retry (except for first attempt)
         // Skip if we already delayed in the catch block (for 429 errors)
         if (attempt > 0 && !alreadyDelayed) {
-          // Exponential backoff: 2s, 4s, 8s, etc.
-          const delay = baseDelay * Math.pow(2, attempt - 1);
-          logProgress(`Retry attempt ${attempt}/${maxRetries} after ${delay}ms delay`, 'warning');
-          await delay(delay);
+          const delayMs = baseDelay * Math.pow(2, attempt - 1);
+          logProgress(`Retry attempt ${attempt}/${maxRetries} after ${delayMs}ms delay`, 'warning');
+          await delay(delayMs);
         }
         
         // Reset the flag before making the request
@@ -72,27 +71,21 @@ export class ScraperService {
         
         // For 429 errors, use longer delays or respect retry-after header
         if (error.response?.status === 429) {
-          // Check if server provides retry-after header
-          // According to HTTP RFC 7231, Retry-After numeric values are always in seconds
           const retryAfter = error.response?.headers?.['retry-after'] || 
                             error.response?.headers?.['Retry-After'];
-          let delay;
+          let delayMs;
           
           if (retryAfter) {
-            // Retry-After is always in seconds per HTTP RFC 7231
             const retryAfterSeconds = parseInt(retryAfter, 10);
-            const retryAfterMs = retryAfterSeconds * 1000; // Convert seconds to milliseconds
-            delay = retryAfterMs + 1000; // Add 1 second buffer
-            logProgress(`Rate limit (429) - server says retry after ${retryAfterSeconds}s, waiting ${Math.round(delay/1000)}s before retry ${attempt + 1}/${maxRetries}...`, 'warning');
+            delayMs = retryAfterSeconds * 1000 + 1000;
+            logProgress(`Rate limit (429) - server says retry after ${retryAfterSeconds}s, waiting ${Math.round(delayMs/1000)}s before retry ${attempt + 1}/${maxRetries}...`, 'warning');
           } else {
-            // Fallback to exponential backoff
-            delay = baseDelay * Math.pow(2, attempt - 1) * 2; // Double the delay for 429
-            logProgress(`Rate limit (429) - waiting ${Math.round(delay/1000)}s before retry ${attempt + 1}/${maxRetries}...`, 'warning');
+            delayMs = baseDelay * Math.pow(2, attempt - 1) * 2;
+            logProgress(`Rate limit (429) - waiting ${Math.round(delayMs/1000)}s before retry ${attempt + 1}/${maxRetries}...`, 'warning');
           }
           
-          // Delay here for 429 errors to avoid double delay in next iteration
-          await delay(delay);
-          alreadyDelayed = true; // Mark to skip delay in next iteration
+          await delay(delayMs);
+          alreadyDelayed = true;
         } else {
           logProgress(`Request failed (${error.response?.status || error.code}), will retry...`, 'warning');
         }
@@ -1085,11 +1078,12 @@ export class ScraperService {
   async getDeviceReleased(deviceUrl) {
     try {
       const url = deviceUrl.startsWith('http') ? deviceUrl : this.baseUrl + '/' + deviceUrl;
+      await delay(2000);
       
       const response = await this.makeRequestWithRetry(
         () => this.apiClient.get(url),
-        3, // max retries
-        3000 // base delay for retries
+        3,
+        3000
       );
       const html = response.data;
       
