@@ -73,7 +73,30 @@ export class ScraperService {
           throw error;
         }
         
-        logProgress(`Request failed (${error.response?.status || error.code}), will retry...`, 'warning');
+        // For 429 errors, use longer delays or respect retry-after header
+        if (error.response?.status === 429) {
+          // Check if server provides retry-after header (in seconds)
+          const retryAfter = error.response?.headers?.['retry-after'] || 
+                            error.response?.headers?.['Retry-After'];
+          let delay;
+          
+          if (retryAfter) {
+            // retry-after can be in seconds (number) or milliseconds (if > 1000)
+            const retryAfterNum = parseInt(retryAfter, 10);
+            // If retry-after is less than 1000, assume it's in seconds, otherwise assume milliseconds
+            const retryAfterMs = retryAfterNum < 1000 ? retryAfterNum * 1000 : retryAfterNum;
+            delay = retryAfterMs + 1000; // Add 1 second buffer
+            logProgress(`Rate limit (429) - server says retry after ${retryAfter}s, waiting ${Math.round(delay/1000)}s before retry ${attempt}/${maxRetries}...`, 'warning');
+          } else {
+            // Fallback to exponential backoff
+            delay = baseDelay * Math.pow(2, attempt - 1) * 2; // Double the delay for 429
+            logProgress(`Rate limit (429) - waiting ${delay}ms before retry ${attempt}/${maxRetries}...`, 'warning');
+          }
+          
+          await this.delay(delay);
+        } else {
+          logProgress(`Request failed (${error.response?.status || error.code}), will retry...`, 'warning');
+        }
       }
     }
     
@@ -207,15 +230,15 @@ export class ScraperService {
       
       logProgress('Getting available brands...', 'info');
       
-      // Add delay before request to avoid rate limiting
-      await this.delay(3000);
+      // Add longer delay before request to avoid rate limiting (especially on startup)
+      await this.delay(10000); // 10 seconds initial delay
       
       try {
-        // Use retry logic for rate limit errors
+        // Use retry logic for rate limit errors with more retries and longer delays
         const response = await this.makeRequestWithRetry(
           () => this.apiClient.get('/makers.php3'),
-          3, // max retries
-          5000 // base delay for retries (5s, 10s, 20s)
+          5, // max retries (increased from 3)
+          10000 // base delay for retries (10s, 20s, 40s, 80s, 160s)
         );
       
       // Extract brands from HTML response
@@ -396,211 +419,252 @@ export class ScraperService {
       const brandNameLower = brandName ? brandName.toLowerCase() : null;
       logProgress(`Searching for devices by brand: ${brandName}`, 'info');
       
-      // Add random delay to avoid detection (increased to avoid rate limiting)
-      const randomDelay = Math.floor(Math.random() * 5000) + 3000; // 3-8 seconds
+      // Extract brand ID from brandUrl
+      let brandId = null;
+      if (options.brandUrl) {
+        logProgress(`Attempting to extract brand ID from URL: ${options.brandUrl}`, 'info');
+        brandId = this.extractBrandIdFromUrl(options.brandUrl);
+        if (brandId) {
+          logProgress(`✅ Extracted brand ID: ${brandId} from URL: ${options.brandUrl}`, 'success');
+        } else {
+          logProgress(`❌ Could not extract brand ID from URL: ${options.brandUrl}`, 'warn');
+        }
+      } else {
+        logProgress(`⚠️ No brandUrl provided in options`, 'warn');
+      }
+      
+      // If brand ID is not available, fall back to old method (scrape brand page)
+      if (!brandId) {
+        logProgress(`⚠️ Brand ID not available, falling back to brand page scraping`, 'warn');
+        // Use the brand page URL directly
+        if (options.brandUrl) {
+          const brandPageUrl = options.brandUrl.startsWith('http') 
+            ? options.brandUrl 
+            : `${this.baseUrl}/${options.brandUrl.replace(/^\/+/, '')}`;
+          return await this.scrapeDevicesFromBrandPage(brandPageUrl, brandName, options);
+        }
+        return [];
+      }
+      
+      // Add random delay to avoid detection
+      const randomDelay = Math.floor(Math.random() * 3000) + 2000; // 2-5 seconds
       await this.delay(randomDelay);
       
-      // Try multiple search approaches
-      const searchUrls = [];
-
-      if (options.brandUrl) {
-        const brandUrl = options.brandUrl.startsWith('http')
-          ? options.brandUrl
-          : `${this.baseUrl}/${options.brandUrl.replace(/^\/+/, '')}`;
-        searchUrls.push(brandUrl.replace(this.baseUrl, '').replace(/^\/?/, '/'));
-      }
-
-      if (brandName) {
-        searchUrls.push(
-          `/${brandNameLower}-phones-48.php`,
-          `/${brandNameLower}-phones-f-0-0-p1.php`,
-          `/results.php3?sQuickSearch=yes&sName=${encodeURIComponent(brandName)}`,
-          `/results.php3?sQuickSearch=${encodeURIComponent(brandName)}`
-        );
+      // Build search URL using GSM Arena search API
+      // Format: https://www.gsmarena.com/results.php3?nYearMin=2023&sMakers=48
+      // Note: results.php3 is the actual results page, search.php3 is just a form
+      const searchParams = new URLSearchParams();
+      searchParams.append('sMakers', brandId.toString());
+      
+      if (options.minYear) {
+        searchParams.append('nYearMin', options.minYear.toString());
       }
       
-      let devices = [];
-      let lastReleaseInfoMap = null;
+      const searchUrl = `/results.php3?${searchParams.toString()}`;
+      logProgress(`Using search API: ${searchUrl}`, 'info');
       
-      for (const searchUrl of searchUrls) {
-        try {
-          logProgress(`Trying search URL: ${searchUrl}`, 'info');
-          // Use retry logic for rate limit errors
-          const response = await this.makeRequestWithRetry(
-            () => this.apiClient.get(searchUrl),
-            3, // max retries
-            3000 // base delay for retries (3s, 6s, 12s)
-          );
-          const html = response.data;
-          lastReleaseInfoMap = this.extractReleaseInfoMap(html);
+      // Make request to search API
+      const response = await this.makeRequestWithRetry(
+        () => this.apiClient.get(searchUrl),
+        3, // max retries
+        3000 // base delay for retries
+      );
+      
+      const html = response.data;
+      logProgress(`Search response length: ${html.length}`, 'info');
+      
+      // Check if HTML contains device listings
+      // Search results might have different structure - look for common indicators
+      const hasDeviceListings = html.includes('results') || html.includes('phone') || html.includes('device');
+      logProgress(`HTML contains device indicators: ${hasDeviceListings}`, 'info');
+      
+      // Extract devices from search results HTML
+      // GSM Arena search results use specific patterns for device listings
+      // Based on the actual HTML structure from search.php3
+      const devices = [];
+      const devicePatterns = [
+        // Pattern 1: Standard device link format from search results (most common)
+        // <a href="apple_iphone_17_pro_max-13964.php"><img...><strong><span>iPhone 17 Pro Max</span></strong></a>
+        /<a\s+href="([^"]+)"[^>]*>\s*<img[^>]*>\s*<strong><span>([^<]+)<\/span><\/strong><\/a>/gi,
+        // Pattern 2: Device links without span
+        /<a\s+href="([^"]+)"[^>]*>\s*<img[^>]*>\s*<strong>([^<]+)<\/strong><\/a>/gi,
+        // Pattern 3: Device links in li elements
+        /<li><a\s+href="([^"]+)"[^>]*>\s*<img[^>]*>\s*<strong><span>([^<]+)<\/span><\/strong><\/a><\/li>/gi,
+        // Pattern 4: More flexible - any link with device URL pattern (non-greedy)
+        /<a\s+href="([^"]+-[^"]+\.php)"[^>]*>[\s\S]*?<strong>([^<]+)<\/strong>/gi,
+        // Pattern 5: Pattern from brand pages (fallback) - no whitespace
+        /<a\s+href="([^"]+)"[^>]*><img[^>]*><strong><span>([^<]+)<\/span><\/strong><\/a>/gi,
+        // Pattern 6: Search results might use different structure - try table rows
+        /<tr[^>]*>[\s\S]*?<a\s+href="([^"]+)"[^>]*>[\s\S]*?<strong>([^<]+)<\/strong>[\s\S]*?<\/a>[\s\S]*?<\/tr>/gi,
+        // Pattern 7: Try div-based listings
+        /<div[^>]*>[\s\S]*?<a\s+href="([^"]+)"[^>]*>[\s\S]*?<img[^>]*>[\s\S]*?<strong>([^<]+)<\/strong>[\s\S]*?<\/a>[\s\S]*?<\/div>/gi
+      ];
+      
+      for (let patternIndex = 0; patternIndex < devicePatterns.length; patternIndex++) {
+        const pattern = devicePatterns[patternIndex];
+        let match;
+        pattern.lastIndex = 0; // Reset regex
+        let patternMatches = 0;
+        
+        while ((match = pattern.exec(html)) !== null) {
+          patternMatches++;
+          const url = match[1].startsWith('http') ? match[1] : this.baseUrl + '/' + match[1].replace(/^\/+/, '');
           
-          // Log the response for debugging
-          logProgress(`Search response length: ${html.length}`, 'info');
+          // Extract device name (remove HTML tags if any)
+          let name = match[2].replace(/<[^>]+>/g, '').trim();
           
-          // Try multiple regex patterns to extract device data
-          const devicePatterns = [
-            // Pattern 1: Device links with images (most specific for GSM Arena)
-            /<a href="([^"]+)"[^>]*><img[^>]*><strong><span>([^<]+)<\/span><\/strong><\/a>/g,
-            // Pattern 2: Device links in li elements
-            /<li><a href="([^"]+)"[^>]*><img[^>]*><strong><span>([^<]+)<\/span><\/strong><\/a><\/li>/g,
-            // Pattern 3: General device links with images
-            /<a href="([^"]+)"[^>]*><img[^>]*><br>([^<]+)<\/a>/g,
-            // Pattern 4: Links in makers section
-            /<a href="([^"]+)"[^>]*class="[^"]*makers[^"]*"[^>]*>([^<]+)<\/a>/g,
-            // Pattern 5: Device links in specific containers
-            /<a href="([^"]+)"[^>]*class="[^"]*phone[^"]*"[^>]*>([^<]+)<\/a>/g,
-            // Pattern 6: More flexible pattern for device links
-            /<a\s+href="([^"]+)"[^>]*>\s*<img[^>]*>\s*<strong>([^<]+)<\/strong>/gi,
-            // Pattern 7: Pattern for div-based device listings
-            /<div[^>]*>\s*<a\s+href="([^"]+)"[^>]*>\s*<img[^>]*>\s*([^<]+)<\/a>/gi,
-            // Pattern 8: Generic pattern for any link containing device name patterns
-            /<a\s+href="([^"]+-[^"]+\.php)"[^>]*>([^<]*iPhone[^<]*|[^<]*Galaxy[^<]*|[^<]*Pixel[^<]*|[^<]*Xiaomi[^<]*|[^<]*Huawei[^<]*)/gi
+          // Debug: log first few matches
+          if (patternMatches <= 3) {
+            logProgress(`Pattern ${patternIndex + 1} match ${patternMatches}: name="${name}", url="${url}"`, 'debug');
+          }
+          
+          // Skip invalid entries
+          if (!url.includes('.php') || 
+              url.includes('glossary') || 
+              url.includes('makers') ||
+              url.includes('news') ||
+              url.includes('reviews') ||
+              url.includes('videos') ||
+              url.includes('deals') ||
+              url.includes('contact') ||
+              url.includes('coverage') ||
+              url.includes('search') ||
+              url.includes('phone-finder') ||
+              name.length < 3) {
+            continue;
+          }
+          
+          // Extract year from name if available
+          const yearMatch = name.match(/\b(20\d{2})\b/);
+          let extractedYear = yearMatch ? parseInt(yearMatch[1], 10) : null;
+          
+          // Also try to extract year from URL
+          if (!extractedYear) {
+            const urlYearMatch = url.match(/\b(20\d{2})\b/);
+            extractedYear = urlYearMatch ? parseInt(urlYearMatch[1], 10) : null;
+          }
+          
+          // Filter out non-phone devices (tablets, watches, accessories, etc.)
+          const nameLower = name.toLowerCase();
+          const nonPhoneKeywords = [
+            'ipad',
+            'pad',
+            'tab',
+            'matepad',
+            'watch',
+            'band',
+            'airpods',
+            'buds',
+            'mac',
+            'macbook',
+            'imac',
+            'mac mini',
+            'mac pro',
+            'apple tv',
+            'homepod',
+            'airtag',
+            'tablet',
+            'smartwatch',
+            'smart watch',
+            'earbuds',
+            'headphones',
+            'speaker',
+            'accessory',
+            'charger',
+            'case',
+            'cover'
           ];
           
-          for (const pattern of devicePatterns) {
-            let match;
-            const tempDevices = [];
+          const isNonPhone = nonPhoneKeywords.some(keyword => nameLower.includes(keyword));
+          if (isNonPhone) {
+            continue;
+          }
+          
+          // Apply keyword exclusion if specified
+          if (options.excludeKeywords && options.excludeKeywords.length > 0) {
+            const shouldExclude = options.excludeKeywords.some(keyword => 
+              nameLower.includes(keyword.toLowerCase())
+            );
             
-            while ((match = pattern.exec(html)) !== null) {
-              const url = match[1].startsWith('http') ? match[1] : this.baseUrl + '/' + match[1];
-              const name = match[2].trim();
-              
-              // Skip non-device links
-              if (!url.includes('.php') || 
-                  url.includes('glossary') || 
-                  url.includes('makers') ||
-                  url.includes('news') ||
-                  url.includes('reviews') ||
-                  url.includes('videos') ||
-                  url.includes('deals') ||
-                  url.includes('contact') ||
-                  url.includes('coverage') ||
-                  url.includes('search') ||
-                  url.includes('phone-finder') ||
-                  url.includes('network-bands') ||
-                  name.length < 3 ||
-                  name.toLowerCase().includes('videos') ||
-                  name.toLowerCase().includes('deals') ||
-                  name.toLowerCase().includes('contact') ||
-                  name.toLowerCase().includes('coverage') ||
-                  name.toLowerCase().includes('phone finder') ||
-                  name.toLowerCase().includes('search')) {
-                continue;
-              }
-              
-              // Extract year if available (look for patterns like "2025", "2024", etc.)
-              const yearMatch = name.match(/\b(20\d{2})\b/);
-              const year = yearMatch ? parseInt(yearMatch[1], 10) : null;
-              
-              // Also try to extract year from URL if not found in name
-              let extractedYear = year;
-              if (!extractedYear) {
-                const urlYearMatch = url.match(/\b(20\d{2})\b/);
-                extractedYear = urlYearMatch ? parseInt(urlYearMatch[1], 10) : null;
-              }
-              
-              // For iPhone models without explicit year, infer from model number
-              if (!extractedYear && name.toLowerCase().includes('iphone')) {
-                const iphoneMatch = name.match(/iPhone\s+(\d+)/i);
-                if (iphoneMatch) {
-                  const iphoneNumber = parseInt(iphoneMatch[1]);
-                  // iPhone 17 = 2025, iPhone 16 = 2024, iPhone 15 = 2023, etc.
-                  extractedYear = 2007 + iphoneNumber;
-                }
-              }
-              
-              // Apply minYear filter early if year is available
-              if (options.minYear && extractedYear && extractedYear < options.minYear) {
-                continue;
-              }
-              
-              // Apply keyword exclusion if specified
-              if (options.excludeKeywords && options.excludeKeywords.length > 0) {
-                const shouldExclude = options.excludeKeywords.some(keyword => 
-                  name.toLowerCase().includes(keyword.toLowerCase())
-                );
-                
-                if (shouldExclude) {
-                  continue;
-                }
-              }
-              
-              // Filter out non-phone devices (tablets, watches, accessories, etc.)
-              const nameLower = name.toLowerCase();
-              const nonPhoneKeywords = [
-                'ipad',
-                'pad',
-                'tab',
-                'matepad',
-                'watch',
-                'band',
-                'airpods',
-                'buds',
-                'mac',
-                'macbook',
-                'imac',
-                'mac mini',
-                'mac pro',
-                'apple tv',
-                'homepod',
-                'airtag',
-                'tablet',
-                'smartwatch',
-                'smart watch',
-                'earbuds',
-                'headphones',
-                'speaker',
-                'accessory',
-                'charger',
-                'case',
-                'cover'
-              ];
-              
-              const isNonPhone = nonPhoneKeywords.some(keyword => nameLower.includes(keyword));
-              if (isNonPhone) {
-                continue;
-              }
-
-              if (brandNameLower) {
-                const urlLower = url.toLowerCase();
-                const brandMatchesUrl =
-                  urlLower.includes(`-${brandNameLower}-`) ||
-                  urlLower.includes(`_${brandNameLower}_`) ||
-                  urlLower.includes(`/${brandNameLower}`) ||
-                  urlLower.includes(`${brandNameLower}-phones`);
-                const brandMatchesName = nameLower.includes(brandNameLower);
-                if (!brandMatchesUrl && !brandMatchesName) {
-                  continue;
-                }
-              }
-              
-              tempDevices.push({
-                name,
-                url,
-                year: extractedYear
-              });
-            }
-            
-            // If we found devices with this pattern, use them
-            if (tempDevices.length > 0) {
-              devices = [...devices, ...tempDevices];
-              break; // Stop trying other patterns for this URL
+            if (shouldExclude) {
+              continue;
             }
           }
           
-          // If we found devices, stop trying other URLs
-          if (devices.length > 0) {
-            break;
+          devices.push({
+            name,
+            url,
+            year: extractedYear
+          });
+        }
+        
+        // Log pattern results
+        if (patternMatches > 0) {
+          logProgress(`Pattern ${patternIndex + 1} found ${patternMatches} matches, ${devices.length} valid devices`, 'info');
+        }
+        
+        // If we found devices with this pattern, stop trying other patterns
+        if (devices.length > 0) {
+          logProgress(`Using pattern ${patternIndex + 1} for device extraction`, 'success');
+          break;
+        }
+      }
+      
+      if (devices.length === 0) {
+        // Try to find any device-like URLs in HTML as fallback
+        // Device URLs pattern: brand_model-12345.php (not brand-phones-48.php)
+        const deviceUrlPattern = /([a-z_]+_[a-z0-9_]+-\d+\.php)/gi;
+        const urlMatches = html.match(deviceUrlPattern);
+        if (urlMatches && urlMatches.length > 0) {
+          logProgress(`Found ${urlMatches.length} potential device URLs in HTML (sample: ${urlMatches.slice(0, 5).join(', ')})`, 'info');
+          
+          // Try to extract device names from these URLs
+          for (const deviceUrl of urlMatches.slice(0, 50)) { // Limit to first 50
+            // Extract device name from URL (e.g., apple_iphone_17_pro_max-13964.php -> iPhone 17 Pro Max)
+            const urlParts = deviceUrl.replace('.php', '').split('-');
+            const deviceId = urlParts[urlParts.length - 1];
+            const nameParts = urlParts.slice(0, -1).join('_').split('_').slice(1); // Remove brand name
+            
+            // Convert snake_case to Title Case
+            let deviceName = nameParts.map(part => 
+              part.charAt(0).toUpperCase() + part.slice(1).toLowerCase()
+            ).join(' ');
+            
+            // Skip if name is too short or looks invalid
+            if (deviceName.length < 3 || deviceName.toLowerCase().includes('phones')) {
+              continue;
+            }
+            
+            // Extract year if available
+            const yearMatch = deviceName.match(/\b(20\d{2})\b/);
+            let extractedYear = yearMatch ? parseInt(yearMatch[1], 10) : null;
+            
+            // Filter non-phone devices
+            const nameLower = deviceName.toLowerCase();
+            const nonPhoneKeywords = ['ipad', 'pad', 'tab', 'matepad', 'watch', 'band', 'airpods', 'buds', 'mac', 'macbook', 'imac', 'tablet', 'smartwatch'];
+            if (nonPhoneKeywords.some(keyword => nameLower.includes(keyword))) {
+              continue;
+            }
+            
+            devices.push({
+              name: deviceName,
+              url: deviceUrl.startsWith('http') ? deviceUrl : this.baseUrl + '/' + deviceUrl,
+              year: extractedYear
+            });
           }
           
-          // Add delay before trying next URL to avoid rate limiting
-          await this.delay(1000);
-          
-        } catch (urlError) {
-          logProgress(`Error with search URL ${searchUrl}: ${urlError.message}`, 'warn');
-          // Add delay even on error before trying next URL
-          await this.delay(1000);
-          continue;
+          logProgress(`Extracted ${devices.length} devices from URL pattern fallback`, 'info');
+        }
+        
+        if (devices.length === 0) {
+          logProgress(`No devices found with search API patterns. Falling back to brand page scraping.`, 'warn');
+          // Fallback to brand page scraping
+          if (options.brandUrl) {
+            const brandPageUrl = options.brandUrl.startsWith('http') 
+              ? options.brandUrl 
+              : `${this.baseUrl}/${options.brandUrl.replace(/^\/+/, '')}`;
+            return await this.scrapeDevicesFromBrandPage(brandPageUrl, brandName, options);
+          }
         }
       }
       
@@ -614,39 +678,40 @@ export class ScraperService {
           uniqueDevices.push(device);
         }
       }
-
-      const releaseInfoMap = lastReleaseInfoMap || new Map();
+      
+      // Extract release info from the search results page if available
+      const releaseInfoMap = this.extractReleaseInfoMap(html);
       for (const device of uniqueDevices) {
         const normalizedHref = device.url.replace(this.baseUrl, '').replace(/^\/+/, '').toLowerCase();
-        if (!normalizedHref) continue;
-        const snippet = releaseInfoMap?.get(normalizedHref);
-        if (snippet) {
-          device.releaseSnippet = snippet;
-          if (!device.year) {
-            const releaseYear = this.extractYearFromReleaseSnippet(snippet);
-            if (releaseYear) {
-              device.year = releaseYear;
+        if (normalizedHref) {
+          const snippet = releaseInfoMap?.get(normalizedHref);
+          if (snippet) {
+            device.releaseSnippet = snippet;
+            if (!device.year) {
+              const releaseYear = this.extractYearFromReleaseSnippet(snippet);
+              if (releaseYear) {
+                device.year = releaseYear;
+              }
             }
           }
         }
       }
       
-      // If minYear is specified, extract year from device pages for devices without year
-      // and then apply minYear filtering to all devices
+      // If minYear is specified and we still have devices without year, extract from device pages
       if (options.minYear) {
         const devicesWithoutYear = uniqueDevices.filter(d => !d.year);
         if (devicesWithoutYear.length > 0) {
           logProgress(`Extracting year from ${devicesWithoutYear.length} device pages (minYear=${options.minYear})`, 'info');
           
-          // Process devices in parallel (but limit concurrency to avoid rate limiting)
+          // Process devices in batches to avoid rate limiting
           const batchSize = 5;
           for (let i = 0; i < devicesWithoutYear.length; i += batchSize) {
             const batch = devicesWithoutYear.slice(i, i + batchSize);
             await Promise.all(batch.map(async (device) => {
               try {
-                const announcedDate = await this.getDeviceAnnounced(device.url);
-                if (announcedDate) {
-                  const year = this.extractYearFromAnnounced(announcedDate);
+                const releasedDate = await this.getDeviceReleased(device.url);
+                if (releasedDate) {
+                  const year = this.extractYearFromReleaseSnippet(releasedDate);
                   if (year) {
                     device.year = year;
                   }
@@ -656,20 +721,19 @@ export class ScraperService {
               }
             }));
             
-            // Add delay between batches to avoid rate limiting
+            // Add delay between batches
             if (i + batchSize < devicesWithoutYear.length) {
               await this.delay(1000);
             }
           }
         }
         
-        // Always apply minYear filter to all devices (whether they had years initially or we just extracted them)
+        // Apply minYear filter
         const filteredDevices = uniqueDevices.filter(d => {
-          // Keep devices without year (they might be filtered later or we couldn't determine year)
+          // Keep devices without year (unknown year)
           if (!d.year) return true;
           // Exclude devices with year less than minYear
-          if (d.year < options.minYear) return false;
-          return true;
+          return d.year >= options.minYear;
         });
         
         logProgress(`Found ${filteredDevices.length} unique devices for brand ${brandName} (after minYear=${options.minYear} filtering)`, 'success');
@@ -680,6 +744,207 @@ export class ScraperService {
       return uniqueDevices;
     } catch (error) {
       logProgress(`Error searching devices by brand: ${error.message}`, 'error');
+      return [];
+    }
+  }
+
+  /**
+   * Scrape devices from brand page (fallback method when search API doesn't work)
+   * @param {string} brandPageUrl - Brand page URL
+   * @param {string} brandName - Brand name
+   * @param {Object} options - Options including minYear
+   * @returns {Promise<Array>} - Array of device objects
+   */
+  async scrapeDevicesFromBrandPage(brandPageUrl, brandName, options = {}) {
+    try {
+      logProgress(`Scraping devices from brand page: ${brandPageUrl}`, 'info');
+      
+      const brandNameLower = brandName ? brandName.toLowerCase() : null;
+      const searchUrl = brandPageUrl.replace(this.baseUrl, '').replace(/^\/?/, '/');
+      
+      // Use retry logic for rate limit errors
+      const response = await this.makeRequestWithRetry(
+        () => this.apiClient.get(searchUrl),
+        3, // max retries
+        3000 // base delay for retries
+      );
+      
+      const html = response.data;
+      logProgress(`Brand page response length: ${html.length}`, 'info');
+      
+      const releaseInfoMap = this.extractReleaseInfoMap(html);
+      
+      // Use the same patterns as before for brand pages
+      const devicePatterns = [
+        /<a href="([^"]+)"[^>]*><img[^>]*><strong><span>([^<]+)<\/span><\/strong><\/a>/g,
+        /<li><a href="([^"]+)"[^>]*><img[^>]*><strong><span>([^<]+)<\/span><\/strong><\/a><\/li>/g,
+        /<a href="([^"]+)"[^>]*><img[^>]*><br>([^<]+)<\/a>/g
+      ];
+      
+      const devices = [];
+      
+      for (const pattern of devicePatterns) {
+        let match;
+        pattern.lastIndex = 0;
+        
+        while ((match = pattern.exec(html)) !== null) {
+          const url = match[1].startsWith('http') ? match[1] : this.baseUrl + '/' + match[1];
+          const name = match[2].trim();
+          
+          // Skip invalid entries
+          if (!url.includes('.php') || 
+              url.includes('glossary') || 
+              url.includes('makers') ||
+              url.includes('news') ||
+              url.includes('reviews') ||
+              url.includes('videos') ||
+              url.includes('deals') ||
+              url.includes('contact') ||
+              url.includes('coverage') ||
+              url.includes('search') ||
+              url.includes('phone-finder') ||
+              name.length < 3) {
+            continue;
+          }
+          
+          // Extract year from name or URL
+          const yearMatch = name.match(/\b(20\d{2})\b/);
+          let extractedYear = yearMatch ? parseInt(yearMatch[1], 10) : null;
+          
+          if (!extractedYear) {
+            const urlYearMatch = url.match(/\b(20\d{2})\b/);
+            extractedYear = urlYearMatch ? parseInt(urlYearMatch[1], 10) : null;
+          }
+          
+          // For iPhone models without explicit year, infer from model number
+          if (!extractedYear && name.toLowerCase().includes('iphone')) {
+            const iphoneMatch = name.match(/iPhone\s+(\d+)/i);
+            if (iphoneMatch) {
+              const iphoneNumber = parseInt(iphoneMatch[1]);
+              extractedYear = 2007 + iphoneNumber;
+            }
+          }
+          
+          // Apply minYear filter early if year is available
+          if (options.minYear && extractedYear && extractedYear < options.minYear) {
+            continue;
+          }
+          
+          // Filter out non-phone devices
+          const nameLower = name.toLowerCase();
+          const nonPhoneKeywords = [
+            'ipad', 'pad', 'tab', 'matepad', 'watch', 'band', 'airpods', 'buds',
+            'mac', 'macbook', 'imac', 'mac mini', 'mac pro', 'apple tv', 'homepod',
+            'airtag', 'tablet', 'smartwatch', 'smart watch', 'earbuds', 'headphones',
+            'speaker', 'accessory', 'charger', 'case', 'cover'
+          ];
+          
+          if (nonPhoneKeywords.some(keyword => nameLower.includes(keyword))) {
+            continue;
+          }
+          
+          // Apply keyword exclusion
+          if (options.excludeKeywords && options.excludeKeywords.length > 0) {
+            const shouldExclude = options.excludeKeywords.some(keyword => 
+              nameLower.includes(keyword.toLowerCase())
+            );
+            if (shouldExclude) continue;
+          }
+          
+          // Check brand match
+          if (brandNameLower) {
+            const urlLower = url.toLowerCase();
+            const brandMatchesUrl =
+              urlLower.includes(`-${brandNameLower}-`) ||
+              urlLower.includes(`_${brandNameLower}_`) ||
+              urlLower.includes(`/${brandNameLower}`) ||
+              urlLower.includes(`${brandNameLower}-phones`);
+            const brandMatchesName = nameLower.includes(brandNameLower);
+            if (!brandMatchesUrl && !brandMatchesName) {
+              continue;
+            }
+          }
+          
+          devices.push({
+            name,
+            url,
+            year: extractedYear
+          });
+        }
+        
+        if (devices.length > 0) break;
+      }
+      
+      // Remove duplicates
+      const uniqueDevices = [];
+      const seenNames = new Set();
+      for (const device of devices) {
+        if (!seenNames.has(device.name)) {
+          seenNames.add(device.name);
+          uniqueDevices.push(device);
+        }
+      }
+      
+      // Add release snippets
+      for (const device of uniqueDevices) {
+        const normalizedHref = device.url.replace(this.baseUrl, '').replace(/^\/+/, '').toLowerCase();
+        if (normalizedHref) {
+          const snippet = releaseInfoMap?.get(normalizedHref);
+          if (snippet) {
+            device.releaseSnippet = snippet;
+            if (!device.year) {
+              const releaseYear = this.extractYearFromReleaseSnippet(snippet);
+              if (releaseYear) {
+                device.year = releaseYear;
+              }
+            }
+          }
+        }
+      }
+      
+      // If minYear is specified, extract year from device pages for devices without year
+      if (options.minYear) {
+        const devicesWithoutYear = uniqueDevices.filter(d => !d.year);
+        if (devicesWithoutYear.length > 0) {
+          logProgress(`Extracting year from ${devicesWithoutYear.length} device pages (minYear=${options.minYear})`, 'info');
+          
+          const batchSize = 5;
+          for (let i = 0; i < devicesWithoutYear.length; i += batchSize) {
+            const batch = devicesWithoutYear.slice(i, i + batchSize);
+            await Promise.all(batch.map(async (device) => {
+              try {
+                const releasedDate = await this.getDeviceReleased(device.url);
+                if (releasedDate) {
+                  const year = this.extractYearFromReleaseSnippet(releasedDate);
+                  if (year) {
+                    device.year = year;
+                  }
+                }
+              } catch (error) {
+                logProgress(`Error extracting year for ${device.name}: ${error.message}`, 'warn');
+              }
+            }));
+            
+            if (i + batchSize < devicesWithoutYear.length) {
+              await this.delay(1000);
+            }
+          }
+        }
+        
+        // Apply minYear filter
+        const filteredDevices = uniqueDevices.filter(d => {
+          if (!d.year) return true;
+          return d.year >= options.minYear;
+        });
+        
+        logProgress(`Found ${filteredDevices.length} unique devices from brand page (after minYear=${options.minYear} filtering)`, 'success');
+        return filteredDevices;
+      }
+      
+      logProgress(`Found ${uniqueDevices.length} unique devices from brand page`, 'success');
+      return uniqueDevices;
+    } catch (error) {
+      logProgress(`Error scraping devices from brand page: ${error.message}`, 'error');
       return [];
     }
   }
@@ -809,6 +1074,52 @@ export class ScraperService {
     } catch (error) {
       logProgress(`Error getting device image URL: ${error.message}`, 'error');
       logProgress(`Error stack: ${error.stack}`, 'error');
+      return null;
+    }
+  }
+
+  /**
+   * Get device Released date from device page (Status field)
+   * @param {string} deviceUrl - Device URL
+   * @returns {Promise<string|null>} - Released date string or null
+   */
+  async getDeviceReleased(deviceUrl) {
+    try {
+      const url = deviceUrl.startsWith('http') ? deviceUrl : this.baseUrl + '/' + deviceUrl;
+      
+      const response = await this.makeRequestWithRetry(
+        () => this.apiClient.get(url),
+        3, // max retries
+        3000 // base delay for retries
+      );
+      const html = response.data;
+      
+      // Look for "Status" field in the specifications table
+      // Status format: "Available. Released 2025, September 09" or "Released 2025, September 09"
+      const statusPatterns = [
+        /<td[^>]*class="ttl"[^>]*>Status<\/td>\s*<td[^>]*class="nfo"[^>]*>([^<]+)<\/td>/i,
+        /<td[^>]*>Status<\/td>\s*<td[^>]*>([^<]+)<\/td>/i,
+        /<th[^>]*>Status<\/th>\s*<td[^>]*>([^<]+)<\/td>/i,
+        /<tr[^>]*>[\s\S]*?<td[^>]*>Status<\/td>[\s\S]*?<td[^>]*>([^<]+)<\/td>[\s\S]*?<\/tr>/i,
+        /Status[:\s]+([^<\n]+)/i
+      ];
+      
+      for (const pattern of statusPatterns) {
+        const match = html.match(pattern);
+        if (match && match[1]) {
+          let status = match[1].trim();
+          status = status.replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+          status = status.replace(/<[^>]+>/g, '').trim();
+          
+          if (status && status.length > 0 && status.toLowerCase().includes('released')) {
+            return status;
+          }
+        }
+      }
+      
+      return null;
+    } catch (error) {
+      logProgress(`Error getting device released date: ${error.message}`, 'warn');
       return null;
     }
   }
@@ -1078,6 +1389,7 @@ export class ScraperService {
       ];
       
       // Get devices for the brand
+      logProgress(`Passing brandUrl to searchDevicesByBrand: ${brand.url}`, 'info');
       const devices = await this.searchDevicesByBrand(brand.name, {
         minYear: options.minYear,
         excludeKeywords: excludeKeywords,
@@ -1122,7 +1434,7 @@ export class ScraperService {
           // Normalize device_url
           const deviceUrl = device.url.startsWith('http') ? device.url : this.baseUrl + '/' + device.url.replace(/^\/+/, '');
           
-          // Get image_url and announced date sequentially to avoid rate limiting
+          // Get image_url sequentially to avoid rate limiting
           // Each request already has retry logic and delays built in
           // Skip image URL if we're getting rate limited to speed up the process
           let imageUrl = null;
@@ -1135,11 +1447,8 @@ export class ScraperService {
               throw error;
             }
           }
-          // Add longer delay between requests to avoid rate limiting
-          await this.delay(3000);
-          const announcedDate = await this.getDeviceAnnounced(device.url);
           
-          // Extract year from releaseSnippet if available, otherwise use announced date or device.year
+          // Extract year from releaseSnippet if available (ONLY use Released date, not Announced)
           let releaseDate = null;
           let releaseYear = device.year;
           
@@ -1150,21 +1459,30 @@ export class ScraperService {
               releaseYear = extractedYear;
               releaseDate = String(extractedYear); // Store just the year as release_date
             } else {
-              // If we can't extract year, store the full snippet but this shouldn't happen
+              // If we can't extract year, store the full snippet
               releaseDate = device.releaseSnippet;
             }
-          } else if (announcedDate) {
-            // Extract year from announced date
-            const extractedYear = this.extractYearFromAnnounced(announcedDate);
-            if (extractedYear) {
-              releaseYear = extractedYear;
-              releaseDate = String(extractedYear);
-            } else {
-              releaseDate = announcedDate;
-            }
           } else if (device.year) {
+            // Use year from device if available (extracted from name or URL)
             releaseYear = device.year;
             releaseDate = String(device.year);
+          }
+          
+          // If still no release year, try to get it from device page Status field (Released date)
+          if (!releaseYear) {
+            try {
+              await this.delay(2000); // Add delay before request
+              const releasedDate = await this.getDeviceReleased(device.url);
+              if (releasedDate) {
+                const extractedYear = this.extractYearFromReleaseSnippet(releasedDate);
+                if (extractedYear) {
+                  releaseYear = extractedYear;
+                  releaseDate = String(extractedYear);
+                }
+              }
+            } catch (error) {
+              logProgress(`  Error getting released date for ${device.name}: ${error.message}`, 'warn');
+            }
           }
           
           // Extract series from device name (first word)
@@ -1304,11 +1622,24 @@ export class ScraperService {
         
         // Handle both string brand names and brand objects
         if (typeof brand === 'string') {
-          brandObj = {
-            name: brand,
-            url: `${this.baseUrl}/${brand}-phones-48.php`,
-            is_active: true
-          };
+          // Try to get brand from database to get the correct URL
+          const dbBrand = await db.getBrandByName(brand);
+          if (dbBrand && dbBrand.url) {
+            brandObj = {
+              name: brand,
+              url: dbBrand.url,
+              is_active: true
+            };
+            logProgress(`Using brand URL from database: ${dbBrand.url}`, 'info');
+          } else {
+            // Fallback: construct URL (but this won't have correct brand ID)
+            brandObj = {
+              name: brand,
+              url: `${this.baseUrl}/${brand}-phones-48.php`,
+              is_active: true
+            };
+            logProgress(`⚠️ Brand ${brand} not found in database, using fallback URL`, 'warn');
+          }
         } else {
           brandObj = brand;
         }
@@ -1329,6 +1660,98 @@ export class ScraperService {
       logProgress(`Error in scrapeBrands: ${error.message}`, 'error');
       throw error;
     }
+  }
+
+  /**
+   * Count devices for a brand using search API (quick count without full scraping)
+   * @param {string} brandName - Brand name
+   * @param {Object} options - Options including minYear
+   * @returns {Promise<number>} - Number of devices
+   */
+  async countDevicesByBrand(brandName, options = {}) {
+    try {
+      const brandNameLower = brandName ? brandName.toLowerCase() : null;
+      
+      // Get brand from database to get URL
+      const brand = await db.getBrandByName(brandNameLower);
+      if (!brand || !brand.url) {
+        return 0;
+      }
+      
+      // Extract brand ID from URL
+      const brandId = this.extractBrandIdFromUrl(brand.url);
+      if (!brandId) {
+        return 0;
+      }
+      
+      // Build search URL
+      const searchParams = new URLSearchParams();
+      searchParams.append('sMakers', brandId.toString());
+      
+      if (options.minYear) {
+        searchParams.append('nYearMin', options.minYear.toString());
+      }
+      
+      const searchUrl = `/results.php3?${searchParams.toString()}`;
+      
+      // Make request to search API
+      const response = await this.makeRequestWithRetry(
+        () => this.apiClient.get(searchUrl),
+        3, // max retries
+        3000 // base delay for retries
+      );
+      
+      const html = response.data;
+      
+      // Count device URLs in HTML (quick pattern match)
+      const deviceUrlPattern = /([a-z_]+_[a-z0-9_]+-\d+\.php)/gi;
+      const urlMatches = html.match(deviceUrlPattern);
+      
+      if (urlMatches && urlMatches.length > 0) {
+        // Deduplicate URLs using Set (same device URL may appear multiple times in HTML)
+        const uniqueUrls = new Set();
+        
+        // Filter out non-phone devices and deduplicate
+        for (const url of urlMatches) {
+          const nameLower = url.toLowerCase();
+          const nonPhoneKeywords = ['ipad', 'pad', 'tab', 'matepad', 'watch', 'band', 'airpods', 'buds', 'mac', 'macbook', 'imac', 'tablet', 'smartwatch'];
+          
+          // Only add if it's a phone device and not already seen
+          if (!nonPhoneKeywords.some(keyword => nameLower.includes(keyword))) {
+            uniqueUrls.add(url.toLowerCase()); // Normalize to lowercase for deduplication
+          }
+        }
+        
+        return uniqueUrls.size;
+      }
+      
+      return 0;
+    } catch (error) {
+      logProgress(`Error counting devices for brand ${brandName}: ${error.message}`, 'warn');
+      return 0;
+    }
+  }
+
+  /**
+   * Extract brand ID from brand URL
+   * @param {string} brandUrl - Brand URL (e.g., "https://www.gsmarena.com/apple-phones-48.php" or "/apple-phones-48.php")
+   * @returns {number|null} - Brand ID or null
+   */
+  extractBrandIdFromUrl(brandUrl) {
+    if (!brandUrl) return null;
+    
+    // Pattern: apple-phones-48.php or /apple-phones-48.php or https://www.gsmarena.com/apple-phones-48.php
+    // Extract the number before .php (the last number before .php)
+    const match = brandUrl.match(/-(\d+)\.php/);
+    if (match && match[1]) {
+      const brandId = parseInt(match[1], 10);
+      // Validate it's a reasonable brand ID (1-999)
+      if (brandId > 0 && brandId < 1000) {
+        return brandId;
+      }
+    }
+    
+    return null;
   }
 
   /**

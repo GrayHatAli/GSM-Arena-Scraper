@@ -142,17 +142,32 @@ export class ScraperController {
         return ResponseHelper.error(`Brand '${brandName}' not found in database. Please ensure brands are synced first.`);
       }
 
-      const estimatedModels = brandMeta?.estimated_models || CONFIG.MODELS_PER_BRAND || 25;
-      const averageSecondsPerModel = 4; // includes random 1-5s delays
+      // Get actual device count from search API for accurate ETA
+      let estimatedModels = 0;
+      try {
+        estimatedModels = await this.scraperService.countDevicesByBrand(normalizedBrandName, { minYear });
+      } catch (error) {
+        logProgress(`Error counting devices for ${normalizedBrandName}: ${error.message}`, 'warn');
+        // Fallback to estimated_models from database
+        estimatedModels = brandMeta?.estimated_models || CONFIG.MODELS_PER_BRAND || 25;
+      }
+      
+      // If count is 0, use fallback
+      if (estimatedModels === 0) {
+        estimatedModels = brandMeta?.estimated_models || CONFIG.MODELS_PER_BRAND || 25;
+      }
+      
+      const averageSecondsPerModel = 5; // includes random delays and image/spec extraction
       const etaMinutes = Math.max(1, Math.ceil((estimatedModels * averageSecondsPerModel) / 60));
 
       const job = await enqueueBrandScrape(normalizedBrandName, { minYear });
       
       return ResponseHelper.accepted(
-        'Data is being fetched. Estimated completion time is based on the number of models to be extracted. Please retry after the suggested interval.',
+        `Data is being fetched. Found ${estimatedModels} device(s) to extract. Estimated completion time: ${etaMinutes} minute(s). Please retry after this time.`,
         {
           brand: normalizedBrandName,
           jobId: job?.id,
+          estimated_models: estimatedModels,
           eta_minutes: etaMinutes,
           minYear
         }
