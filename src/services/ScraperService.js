@@ -7,6 +7,7 @@ import axios from 'axios';
 import { logProgress, delay } from '../utils/ScraperUtils.js';
 import { CONFIG } from '../config/config.js';
 import * as db from '../database/models.js';
+import { RequestQueue } from '../utils/RequestQueue.js';
 
 export class ScraperService {
   constructor() {
@@ -29,10 +30,22 @@ export class ScraperService {
     this._brandsCache = null;
     this._brandsCacheTime = null;
     this._brandsCacheTTL = 60 * 60 * 1000; // 1 hour in milliseconds
+    
+    // Initialize Request Queue with rate limiting
+    this.requestQueue = new RequestQueue({
+      tokensPerSecond: CONFIG.RATE_LIMIT?.tokensPerSecond || 0.5, // 1 request per 2 seconds
+      bucketSize: CONFIG.RATE_LIMIT?.bucketSize || 2,
+      minDelay: CONFIG.RATE_LIMIT?.minDelay || 2000,
+      maxDelay: CONFIG.RATE_LIMIT?.maxDelay || 10000,
+      failureThreshold: CONFIG.RATE_LIMIT?.failureThreshold || 3,
+      resetTimeout: CONFIG.RATE_LIMIT?.resetTimeout || 60000,
+      maxConcurrent: CONFIG.RATE_LIMIT?.maxConcurrent || 1
+    });
   }
 
   /**
    * Make HTTP request with retry logic and exponential backoff
+   * Now uses RequestQueue for rate limiting
    * @param {Function} requestFn - Function that returns a promise for the HTTP request
    * @param {number} maxRetries - Maximum number of retries (default: 3)
    * @param {number} baseDelay - Base delay in milliseconds (default: 2000)
@@ -40,24 +53,28 @@ export class ScraperService {
    */
   async makeRequestWithRetry(requestFn, maxRetries = 3, baseDelay = 2000) {
     let lastError;
-    let alreadyDelayed = false; // Track if we delayed in catch block to avoid double delay
     
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
-        // Delay before retry (except for first attempt)
-        // Skip if we already delayed in the catch block (for 429 errors)
-        if (attempt > 0 && !alreadyDelayed) {
-          const delayMs = baseDelay * Math.pow(2, attempt - 1);
-          logProgress(`Retry attempt ${attempt}/${maxRetries} after ${delayMs}ms delay`, 'warning');
-          await delay(delayMs);
-        }
+        // Use RequestQueue to ensure rate limiting
+        // The queue handles delays and circuit breaker automatically
+        const result = await this.requestQueue.enqueue(async () => {
+          return await requestFn();
+        });
         
-        // Reset the flag before making the request
-        alreadyDelayed = false;
-        
-        return await requestFn();
+        return result;
       } catch (error) {
         lastError = error;
+        
+        // Check if circuit breaker is open
+        if (error.code === 'CIRCUIT_OPEN') {
+          logProgress('Circuit breaker is open. Waiting before retry...', 'error');
+          // Wait for circuit breaker reset
+          await delay(this.requestQueue.rateLimiter.circuitBreaker.resetTimeout);
+          // Reset and try again
+          this.requestQueue.reset();
+          continue;
+        }
         
         // Check if it's a rate limit error (429) or server error (5xx)
         const isRetryable = error.response?.status === 429 || 
@@ -69,7 +86,7 @@ export class ScraperService {
           throw error;
         }
         
-        // For 429 errors, use longer delays or respect retry-after header
+        // For 429 errors, RequestQueue already handled it, but we respect retry-after header
         if (error.response?.status === 429) {
           const retryAfter = error.response?.headers?.['retry-after'] || 
                             error.response?.headers?.['Retry-After'];
@@ -79,15 +96,17 @@ export class ScraperService {
             const retryAfterSeconds = parseInt(retryAfter, 10);
             delayMs = retryAfterSeconds * 1000 + 1000;
             logProgress(`Rate limit (429) - server says retry after ${retryAfterSeconds}s, waiting ${Math.round(delayMs/1000)}s before retry ${attempt + 1}/${maxRetries}...`, 'warning');
+            await delay(delayMs);
           } else {
-            delayMs = baseDelay * Math.pow(2, attempt - 1) * 2;
-            logProgress(`Rate limit (429) - waiting ${Math.round(delayMs/1000)}s before retry ${attempt + 1}/${maxRetries}...`, 'warning');
+            // RequestQueue already handled the delay, just log
+            logProgress(`Rate limit (429) - handled by queue, retry ${attempt + 1}/${maxRetries}...`, 'warning');
           }
-          
-          await delay(delayMs);
-          alreadyDelayed = true;
         } else {
           logProgress(`Request failed (${error.response?.status || error.code}), will retry...`, 'warning');
+          // Small delay for non-429 errors
+          if (attempt < maxRetries) {
+            await delay(baseDelay * Math.pow(2, attempt));
+          }
         }
       }
     }
@@ -1922,11 +1941,24 @@ export class ScraperService {
    * @returns {Object} - Current status
    */
   async getStatus() {
+    const queueStats = this.requestQueue.getStats();
     return {
       status: 'ready',
       isRunning: false,
       hasBrowser: false,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      rateLimiter: {
+        queueLength: queueStats.queueLength,
+        activeRequests: queueStats.activeRequests,
+        currentDelay: queueStats.rateLimiter.currentDelay,
+        tokens: queueStats.rateLimiter.tokens,
+        circuitBreakerOpen: queueStats.rateLimiter.circuitBreakerOpen,
+        circuitBreakerFailures: queueStats.rateLimiter.circuitBreakerFailures,
+        totalRequests: queueStats.rateLimiter.totalRequests,
+        rateLimitedRequests: queueStats.rateLimiter.rateLimitedRequests,
+        successfulRequests: queueStats.rateLimiter.successfulRequests,
+        failedRequests: queueStats.rateLimiter.failedRequests
+      }
     };
   }
 }

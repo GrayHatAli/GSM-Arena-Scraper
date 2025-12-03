@@ -39,10 +39,28 @@ export const CONFIG = {
 
   // Request delays (in milliseconds)
   DELAYS: {
-    between_requests: 1000,
-    between_models: 2000,
-    between_brands: 3000,
+    between_requests: 2000, // Increased from 1000 to 2000
+    between_models: 3000, // Increased from 2000 to 3000
+    between_brands: 5000, // Increased from 3000 to 5000
     page_load: 2000
+  },
+
+  // Rate limiting configuration
+  RATE_LIMIT: {
+    // Tokens per second (0.5 = 1 request per 2 seconds)
+    tokensPerSecond: 0.5,
+    // Bucket size (burst capacity)
+    bucketSize: 2,
+    // Minimum delay between requests (ms)
+    minDelay: 2000,
+    // Maximum delay between requests (ms)
+    maxDelay: 10000,
+    // Circuit breaker: number of failures before opening circuit
+    failureThreshold: 3,
+    // Circuit breaker: time to wait before retrying (ms)
+    resetTimeout: 60000, // 1 minute
+    // Maximum concurrent requests
+    maxConcurrent: 1 // Sequential processing for better rate limit compliance
   },
 
   // User agent
