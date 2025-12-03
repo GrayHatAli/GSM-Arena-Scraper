@@ -26,13 +26,15 @@ A standalone, production-ready web scraper for GSM Arena mobile phone data with 
 
 ### Option 1: Docker (Recommended)
 
+> **Note**: This project requires Docker Compose v2.0+ (plugin version). Use `docker compose` (with space) instead of `docker-compose` (with hyphen).
+
 ```bash
 # Clone the repository
 git clone <repository-url>
 cd gsm-arena-scraper
 
 # Build and run with Docker Compose
-docker-compose up -d
+docker compose up -d
 
 # Check status
 curl http://localhost:3002/health
@@ -217,7 +219,8 @@ docker run -p 3002:3002 gsm-arena-scraper
 
 ### Docker Compose
 ```bash
-docker-compose up -d
+# Requires Docker Compose v2.0+ (plugin version)
+docker compose up -d
 ```
 
 ## 🔗 Integration Examples
@@ -345,6 +348,7 @@ src/
 ## 📋 Requirements
 
 - Node.js 16+
+- Docker Compose v2.0+ (plugin version) - The `docker-compose.yml` file uses features like `start_period` in healthcheck that require Compose file format 2.1+. Docker Compose v2 (plugin) automatically handles this without needing an explicit version field.
 - Internet connection
 - Sufficient disk space for output files
 - GSM Arena website access
