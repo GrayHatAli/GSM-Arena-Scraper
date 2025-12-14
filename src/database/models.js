@@ -228,26 +228,6 @@ export async function saveModel(model) {
 }
 
 /**
- * Get models by brand ID
- * @param {number} brandId - Brand ID
- * @returns {Promise<Array>} Array of model objects
- */
-export async function getModelsByBrandId(brandId) {
-  const db = getDatabase();
-  if (!db) {
-    return [];
-  }
-
-  try {
-    const rows = db.prepare('SELECT * FROM models WHERE brand_id = ? ORDER BY model_name ASC').all(brandId);
-    return rows.map(mapModel);
-  } catch (error) {
-    logProgress(`Error getting models for brand ${brandId}: ${error.message}`, 'error');
-    return [];
-  }
-}
-
-/**
  * Get models by brand name
  * @param {string} brandName - Brand name
  * @returns {Promise<Array>} Array of model objects
@@ -377,26 +357,6 @@ export async function getSpecificationsByDeviceId(deviceId) {
   } catch (error) {
     logProgress(`Error getting specifications for device ${deviceId}: ${error.message}`, 'error');
     return null;
-  }
-}
-
-/**
- * Check if specifications exist for a device
- * @param {number} deviceId - Device ID
- * @returns {Promise<boolean>} True if specifications exist
- */
-export async function hasSpecifications(deviceId) {
-  const db = getDatabase();
-  if (!db) {
-    return false;
-  }
-
-  try {
-    const row = db.prepare('SELECT 1 FROM specifications WHERE device_id = ? LIMIT 1').get(deviceId);
-    return !!row;
-  } catch (error) {
-    logProgress(`Error checking specifications for device ${deviceId}: ${error.message}`, 'error');
-    return false;
   }
 }
 
