@@ -60,16 +60,20 @@ export class RequestQueue {
       // Process request asynchronously
       this.processRequest(item).finally(() => {
         this.activeRequests--;
-        // Continue processing queue
-        if (this.queue.length > 0) {
-          this.processQueue();
-        } else {
+        const hasQueuedWork = this.queue.length > 0;
+        if (hasQueuedWork) {
+          // Allow the scheduled processQueue to enter by releasing the flag first
+          this.processing = false;
+          setImmediate(() => this.processQueue());
+        } else if (this.activeRequests === 0) {
+          // No queued work and no active requests: release the flag
           this.processing = false;
         }
       });
     }
 
-    if (this.queue.length === 0) {
+    // If loop exits with nothing processed and no active requests, clear flag.
+    if (this.queue.length === 0 && this.activeRequests === 0) {
       this.processing = false;
     }
   }

@@ -285,7 +285,8 @@ export class ScraperRoutes {
   async getBrandDevices(req, res) {
     try {
       const { brandName } = req.params;
-      const { options = {} } = req.body;
+      // Accept options either as nested object or directly in body
+      const options = req.body.options || req.body;
       
       const result = await this.controller.getBrandDevices(brandName, options);
       

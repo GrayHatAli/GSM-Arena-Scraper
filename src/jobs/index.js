@@ -12,16 +12,19 @@ async function handleBrandJob(payload) {
   }
 
   const brandName = payload.brand.toLowerCase();
-  logProgress(`JobQueue: scraping brand ${brandName}`, 'info');
   const scrapeOptions = { ...(payload.options || {}) };
+  
   if (scrapeOptions.minYear) {
-    delete scrapeOptions.minYear; // scrape full catalog, filter later
+    logProgress(`JobQueue: scraping brand ${brandName} with minYear=${scrapeOptions.minYear}`, 'info');
+  } else {
+    logProgress(`JobQueue: scraping brand ${brandName}`, 'info');
   }
+  
   await scraperService.scrapeBrands([brandName], scrapeOptions);
 
   const models = await db.getModelsByBrandName(brandName);
   const filtered = payload.options?.minYear
-    ? models.filter(model => !model.release_year || model.release_year >= payload.options.minYear)
+    ? models.filter(model => model.release_year && model.release_year >= payload.options.minYear)
     : models;
 
   return {
