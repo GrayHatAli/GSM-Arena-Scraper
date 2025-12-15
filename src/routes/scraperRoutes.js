@@ -1,7 +1,4 @@
 import { ScraperController } from '../controllers/ScraperController.js';
-import { getSwaggerDocument } from '../utils/SwaggerHelper.js';
-
-const swaggerDocument = getSwaggerDocument();
 
 export class ScraperRoutes {
   constructor() {
@@ -23,9 +20,7 @@ export class ScraperRoutes {
       'GET /jobs/:jobId': this.getJobStatus.bind(this),
       'GET /jobs': this.getJobsList.bind(this),
       'GET /data/latest': this.getLatestData.bind(this),
-      'POST /data/save': this.saveData.bind(this),
-      'GET /docs': this.getSwaggerUI.bind(this),
-      'GET /swagger.json': this.getSwaggerJSON.bind(this)
+      'POST /data/save': this.saveData.bind(this)
     };
   }
 
@@ -214,26 +209,6 @@ export class ScraperRoutes {
     }
   }
 
-  async getSwaggerUI(req, res) {
-    res.redirect('/docs');
-  }
-
-  /**
-   * Get Swagger JSON
-   * @param {Object} req - Request object
-   * @param {Object} res - Response object
-   */
-  async getSwaggerJSON(req, res) {
-    try {
-      res.json(swaggerDocument);
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: 'Failed to load Swagger JSON',
-        error: error.message
-      });
-    }
-  }
   /**
    * Get job status
    * @param {Object} req

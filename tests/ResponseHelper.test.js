@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { ResponseHelper } from '../utils/ResponseHelper.js';
+import { ResponseHelper } from '../src/utils/ResponseHelper.js';
 
 describe('ResponseHelper', () => {
   it('creates a success response with defaults', () => {

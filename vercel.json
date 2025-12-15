@@ -1,9 +1,7 @@
 {
   "version": 2,
   "functions": {
-    "api/index.js": {
-      "includeFiles": "swagger.yaml"
-    }
+    "api/index.js": {}
   },
   "rewrites": [
     {

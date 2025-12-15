@@ -1,6 +1,6 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { RateLimiter } from '../utils/RateLimiter.js';
+import { RateLimiter } from '../src/utils/RateLimiter.js';
 
 describe('RateLimiter', () => {
   let limiter;

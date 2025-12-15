@@ -59,8 +59,8 @@ export const CONFIG = {
     failureThreshold: 3,
     // Circuit breaker: time to wait before retrying (ms)
     resetTimeout: 60000, // 1 minute
-    // Maximum concurrent requests
-    maxConcurrent: 1 // Sequential processing for better rate limit compliance
+    // Maximum concurrent requests - disabled for sequential processing only
+    maxConcurrent: 1
   },
 
   // User agent
@@ -82,6 +82,6 @@ export const CONFIG = {
     port: 3002,
     host: '0.0.0.0',
     timeout: 300000, // 5 minutes
-    maxConcurrent: 3
+    maxConcurrent: 1 // Force sequential processing
   }
 };

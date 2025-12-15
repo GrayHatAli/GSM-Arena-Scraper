@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { RequestQueue } from '../utils/RequestQueue.js';
+import { RequestQueue } from '../src/utils/RequestQueue.js';
 
 const fastLimiterOptions = {
   tokensPerSecond: 100,

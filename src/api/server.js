@@ -1,11 +1,7 @@
 import express from 'express';
 import cors from 'cors';
-import swaggerUi from 'swagger-ui-express';
 import { ScraperRoutes } from '../routes/scraperRoutes.js';
 import { CONFIG } from '../config/config.js';
-import { getSwaggerDocument } from '../utils/SwaggerHelper.js';
-
-const swaggerDocument = getSwaggerDocument();
 
 export class ScraperAPI {
   constructor() {
@@ -29,28 +25,6 @@ export class ScraperAPI {
 
   setupRoutes() {
     const routeDefinitions = this.routes.getRoutes();
-
-    this.app.get('/swagger.json', routeDefinitions['GET /swagger.json']);
-
-    const swaggerUiOptions = {
-      customCss: '.swagger-ui .topbar { display: none }',
-      customSiteTitle: 'GSM Arena Scraper API Documentation',
-      customJs: [
-        'https://unpkg.com/swagger-ui-dist@5.9.0/swagger-ui-bundle.js',
-        'https://unpkg.com/swagger-ui-dist@5.9.0/swagger-ui-standalone-preset.js'
-      ],
-      customCssUrl: 'https://unpkg.com/swagger-ui-dist@5.9.0/swagger-ui.css'
-    };
-
-    try {
-      this.app.use('/docs', swaggerUi.serve);
-      this.app.use('/', swaggerUi.serve);
-      const swaggerSetup = swaggerUi.setup(swaggerDocument, swaggerUiOptions);
-      this.app.get('/docs', swaggerSetup);
-      this.app.get('/', swaggerSetup);
-    } catch (swaggerError) {
-      console.warn('Swagger UI setup failed, continuing without it:', swaggerError.message);
-    }
 
     this.app.get('/health', routeDefinitions['GET /health']);
     this.app.get('/status', routeDefinitions['GET /status']);
@@ -93,9 +67,6 @@ export class ScraperAPI {
       console.log(`   POST /devices/search - Search devices (with filters and deviceId)`);
       console.log(`   GET  /data/latest - Get latest data`);
       console.log(`   POST /data/save - Save data`);
-      console.log(`📖 Swagger Documentation:`);
-      console.log(`   GET  /docs - Interactive API documentation`);
-      console.log(`   GET  /swagger.json - OpenAPI specification`);
     });
   }
 
