@@ -4,7 +4,7 @@ import { ScraperService } from '../services/ScraperService.js';
 import { ResponseHelper } from '../utils/ResponseHelper.js';
 import * as db from '../database/models.js';
 import { CONFIG } from '../config/config.js';
-import { enqueueBrandScrape, enqueueDeviceSpecs, getJob, getJobs } from '../jobs/index.js';
+import { enqueueBrandScrape, enqueueDeviceSpecs, enqueueBrandList, getJob, getJobs } from '../jobs/index.js';
 import { logProgress } from '../utils/ScraperUtils.js';
 
 export class ScraperController {
@@ -249,9 +249,9 @@ export class ScraperController {
   }
 
   /**
-   * Get brands from database or scrape if empty
+   * Get brands from database or enqueue scraping job if empty
    * @param {Object} options - Query options
-   * @returns {Object} - List of brands (name and URL only)
+   * @returns {Object} - List of brands or queuing message
    */
   async getBrands(options = {}) {
     try {
@@ -259,31 +259,34 @@ export class ScraperController {
       const existingBrands = await db.getBrands(options);
       
       if (existingBrands.length === 0) {
-        // Database is empty, scrape brands from site
-        logProgress('Brands table is empty, scraping brands from site...', 'info');
-        const scrapedBrands = await this.scraperService.getAllBrands();
+        // Database is empty, check if there's already a queued job
+        const existingJob = getJobs({ job_type: 'brand_list', status: 'pending' })[0] ||
+                           getJobs({ job_type: 'brand_list', status: 'processing' })[0];
         
-        // Save only brand_name and brand_url to database
-        for (const brand of scrapedBrands) {
-          await db.saveBrand({
-            name: brand.name,
-            display_name: brand.display_name || brand.name,
-            url: brand.url || null,
-            is_active: brand.is_active !== undefined ? brand.is_active : true,
-            estimated_models: brand.estimated_models || 0
-          });
+        if (existingJob) {
+          // Job already exists, return queuing message
+          return ResponseHelper.accepted(
+            'Your request job is queued. Please make this request again within ~3 minutes.',
+            {
+              jobId: existingJob.id,
+              status: existingJob.status,
+              message: 'Brand list scraping is already in progress'
+            }
+          );
         }
         
-        logProgress(`Scraped and saved ${scrapedBrands.length} brands to database`, 'success');
+        // No existing job, enqueue brand list scraping
+        logProgress('Brands table is empty, enqueuing brand list scraping job...', 'info');
+        const job = await enqueueBrandList();
         
-        // Return scraped brands with only name and URL
-        return ResponseHelper.success('Brands scraped and saved successfully', {
-          brands: scrapedBrands.map(brand => ({
-            brand_name: brand.display_name || brand.name,
-            brand_url: brand.url
-          })),
-          total_brands: scrapedBrands.length
-        });
+        return ResponseHelper.accepted(
+          'Your request job is queued. Please make this request again within ~3 minutes.',
+          {
+            jobId: job.id,
+            status: job.status,
+            message: 'Brand list scraping job has been queued. This will take approximately 3 minutes due to rate limiting.'
+          }
+        );
       }
       
       // Database has brands, read from database

@@ -8,11 +8,11 @@ import { logProgress } from './ScraperUtils.js';
 
 export class RateLimiter {
   constructor(options = {}) {
-    // Tokens per second (default: 1 request per 2 seconds = 0.5 req/s)
-    this.tokensPerSecond = options.tokensPerSecond || 0.5;
+    // Tokens per second (default increased for proxy use: 2 req/s)
+    this.tokensPerSecond = options.tokensPerSecond || 2.0;
     
-    // Maximum bucket size (burst capacity)
-    this.bucketSize = options.bucketSize || 2;
+    // Maximum bucket size (increased burst capacity)
+    this.bucketSize = options.bucketSize || 5;
     
     // Current tokens in bucket
     this.tokens = this.bucketSize;
@@ -20,23 +20,23 @@ export class RateLimiter {
     // Last token refill time
     this.lastRefill = Date.now();
     
-    // Minimum delay between requests (ms)
-    this.minDelay = options.minDelay || 2000;
+    // Minimum delay between requests (reduced due to proxy rotation)
+    this.minDelay = options.minDelay || 1000;
     
-    // Maximum delay between requests (ms)
-    this.maxDelay = options.maxDelay || 10000;
+    // Maximum delay between requests (reduced)
+    this.maxDelay = options.maxDelay || 8000;
     
     // Current delay (adaptive)
     this.currentDelay = this.minDelay;
     
-    // Circuit breaker state
+    // Circuit breaker state (more aggressive with proxies)
     this.circuitBreaker = {
       failures: 0,
       lastFailureTime: null,
       isOpen: false,
       openUntil: null,
-      failureThreshold: options.failureThreshold || 3,
-      resetTimeout: options.resetTimeout || 60000 // 1 minute
+      failureThreshold: options.failureThreshold || 2, // reduced from 3
+      resetTimeout: options.resetTimeout || 30000 // reduced from 60000
     };
     
     // Statistics
@@ -85,54 +85,54 @@ export class RateLimiter {
   }
 
   /**
-   * Record a failure (429 error)
+   * Record a failure (429 error) - less aggressive with proxy rotation
    */
   recordFailure() {
     this.circuitBreaker.failures++;
     this.circuitBreaker.lastFailureTime = Date.now();
     this.stats.failedRequests++;
     
-    // Increase delay exponentially
+    // Increase delay more moderately (proxy rotation helps)
     this.currentDelay = Math.min(
       this.maxDelay,
-      this.currentDelay * 1.5
+      this.currentDelay * 1.3 // reduced from 1.5
     );
     
     logProgress(`Rate limit detected. Increasing delay to ${Math.round(this.currentDelay)}ms`, 'warning');
     
-    // Open circuit breaker if threshold reached
+    // Open circuit breaker if threshold reached (more aggressive threshold due to proxy rotation)
     if (this.circuitBreaker.failures >= this.circuitBreaker.failureThreshold) {
       this.circuitBreaker.isOpen = true;
       this.circuitBreaker.openUntil = Date.now() + this.circuitBreaker.resetTimeout;
       logProgress(
-        `Circuit breaker: Opening circuit for ${this.circuitBreaker.resetTimeout / 1000}s due to ${this.circuitBreaker.failures} failures`,
-        'error'
+        `Circuit breaker: Opening circuit for ${this.circuitBreaker.resetTimeout / 1000}s due to ${this.circuitBreaker.failures} failures (proxy rotation will help)`,
+        'warning'
       );
     }
   }
 
   /**
-   * Record a success
+   * Record a success - faster recovery with proxy rotation
    */
   recordSuccess() {
     this.circuitBreaker.failures = Math.max(0, this.circuitBreaker.failures - 1);
     this.stats.successfulRequests++;
     
-    // Gradually decrease delay on success
+    // Decrease delay faster on success (proxy rotation helps)
     if (this.currentDelay > this.minDelay) {
       this.currentDelay = Math.max(
         this.minDelay,
-        this.currentDelay * 0.9
+        this.currentDelay * 0.8 // faster recovery from 0.9 to 0.8
       );
     }
   }
 
   /**
-   * Wait for rate limit with jitter
+   * Wait for rate limit with reduced jitter (proxy rotation provides natural variation)
    */
   async waitForRateLimit() {
-    // Add jitter (random variation) to prevent synchronized requests
-    const jitter = Math.random() * 0.3 * this.currentDelay; // ±30% variation
+    // Reduced jitter since proxy rotation provides natural request distribution
+    const jitter = Math.random() * 0.2 * this.currentDelay; // ±20% variation (reduced from 30%)
     const delayWithJitter = this.currentDelay + jitter;
     
     await delay(delayWithJitter);

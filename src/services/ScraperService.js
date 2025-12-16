@@ -31,90 +31,96 @@ export class ScraperService {
     this._brandsCacheTime = null;
     this._brandsCacheTTL = 60 * 60 * 1000; // 1 hour in milliseconds
     
-    // Initialize Request Queue with rate limiting
+    // Initialize Request Queue with rate limiting and proxy support
     this.requestQueue = new RequestQueue({
-      tokensPerSecond: CONFIG.RATE_LIMIT?.tokensPerSecond || 0.5, // 1 request per 2 seconds
-      bucketSize: CONFIG.RATE_LIMIT?.bucketSize || 2,
-      minDelay: CONFIG.RATE_LIMIT?.minDelay || 2000,
-      maxDelay: CONFIG.RATE_LIMIT?.maxDelay || 10000,
-      failureThreshold: CONFIG.RATE_LIMIT?.failureThreshold || 3,
-      resetTimeout: CONFIG.RATE_LIMIT?.resetTimeout || 60000,
-      maxConcurrent: CONFIG.RATE_LIMIT?.maxConcurrent || 1
+      tokensPerSecond: CONFIG.RATE_LIMIT?.tokensPerSecond || 2.0, // افزایش از 0.5 به 2.0
+      bucketSize: CONFIG.RATE_LIMIT?.bucketSize || 5,
+      minDelay: CONFIG.RATE_LIMIT?.minDelay || 1000,
+      maxDelay: CONFIG.RATE_LIMIT?.maxDelay || 8000,
+      failureThreshold: CONFIG.RATE_LIMIT?.failureThreshold || 2,
+      resetTimeout: CONFIG.RATE_LIMIT?.resetTimeout || 30000,
+      maxConcurrent: CONFIG.RATE_LIMIT?.maxConcurrent || 10, // افزایش از 1 به 10
+      adaptiveConcurrency: CONFIG.RATE_LIMIT?.adaptiveConcurrency !== false,
+      proxy: CONFIG.PROXY || {}
     });
   }
 
   /**
-   * Make HTTP request with retry logic and exponential backoff
-   * Now uses RequestQueue for rate limiting
+   * Make HTTP request with retry logic, proxy rotation, and exponential backoff
    * @param {Function} requestFn - Function that returns a promise for the HTTP request
    * @param {number} maxRetries - Maximum number of retries (default: 3)
-   * @param {number} baseDelay - Base delay in milliseconds (default: 2000)
+   * @param {number} baseDelay - Base delay in milliseconds (default: 1000)
    * @returns {Promise} - Request result
    */
-  async makeRequestWithRetry(requestFn, maxRetries = 3, baseDelay = 2000) {
+  async makeRequestWithRetry(requestFn, maxRetries = 3, baseDelay = 1000) {
     let lastError;
+    let currentProxy = null;
     
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
-        // Use RequestQueue to ensure rate limiting
-        // The queue handles delays and circuit breaker automatically
-        const result = await this.requestQueue.enqueue(async () => {
-          return await requestFn();
+        // Use RequestQueue to ensure rate limiting and proxy management
+        const result = await this.requestQueue.enqueue(async (options = {}) => {
+          // Create axios config with proxy if available
+          const config = { ...options };
+          
+          if (options.proxy) {
+            currentProxy = options.proxy;
+          }
+          
+          // Execute the request function with the config
+          return await requestFn(config);
         });
         
         return result;
+        
       } catch (error) {
         lastError = error;
         
         // Check if circuit breaker is open
         if (error.code === 'CIRCUIT_OPEN') {
           logProgress('Circuit breaker is open. Waiting before retry...', 'error');
-          // Wait for circuit breaker reset
           await delay(this.requestQueue.rateLimiter.circuitBreaker.resetTimeout);
-          // Reset and try again
           this.requestQueue.reset();
           continue;
+        }
+        
+        // Check if no proxy available
+        if (error.code === 'NO_PROXY') {
+          logProgress('No healthy proxies available', 'error');
+          throw error;
         }
         
         // Check if it's a rate limit error (429) or server error (5xx)
         const isRetryable = error.response?.status === 429 || 
                            (error.response?.status >= 500 && error.response?.status < 600) ||
                            error.code === 'ECONNRESET' ||
-                           error.code === 'ETIMEDOUT';
+                           error.code === 'ETIMEDOUT' ||
+                           error.code === 'ECONNREFUSED';
         
         if (!isRetryable || attempt === maxRetries) {
           throw error;
         }
         
-        // For 429 errors, RequestQueue already handled it, but we respect retry-after header
+        // For 429 errors with proxy rotation
         if (error.response?.status === 429) {
-          const retryAfter = error.response?.headers?.['retry-after'] || 
-                            error.response?.headers?.['Retry-After'];
-          let delayMs;
+          logProgress(`Rate limit (429) detected - proxy will be rotated for retry ${attempt + 1}/${maxRetries}`, 'warning');
           
-          if (retryAfter) {
-            const retryAfterSeconds = parseInt(retryAfter, 10);
-            // Validate that parseInt returned a valid number
-            if (!isNaN(retryAfterSeconds) && retryAfterSeconds > 0 && retryAfterSeconds < 3600) {
-              delayMs = retryAfterSeconds * 1000 + 1000;
-              logProgress(`Rate limit (429) - server says retry after ${retryAfterSeconds}s, waiting ${Math.round(delayMs/1000)}s before retry ${attempt + 1}/${maxRetries}...`, 'warning');
-              await delay(delayMs);
-            } else {
-              // Invalid retry-after value, use exponential backoff instead
-              delayMs = baseDelay * Math.pow(2, attempt - 1) * 2;
-              logProgress(`Rate limit (429) - invalid retry-after header (${retryAfter}), using exponential backoff: ${Math.round(delayMs/1000)}s before retry ${attempt + 1}/${maxRetries}...`, 'warning');
-              await delay(delayMs);
-            }
-          } else {
-            // RequestQueue already handled the delay, just log
-            logProgress(`Rate limit (429) - handled by queue, retry ${attempt + 1}/${maxRetries}...`, 'warning');
-          }
+          // Don't wait as long since we're rotating proxies
+          const delayMs = Math.min(baseDelay * Math.pow(1.5, attempt), 5000);
+          logProgress(`Waiting ${Math.round(delayMs/1000)}s before retry with new proxy...`, 'info');
+          await delay(delayMs);
+          
+        } else if (error.response?.status >= 500) {
+          // Server errors - moderate delay
+          const delayMs = baseDelay * Math.pow(2, attempt);
+          logProgress(`Server error (${error.response.status}) - waiting ${Math.round(delayMs/1000)}s before retry ${attempt + 1}/${maxRetries}...`, 'warning');
+          await delay(delayMs);
+          
         } else {
-          logProgress(`Request failed (${error.response?.status || error.code}), will retry...`, 'warning');
-          // Small delay for non-429 errors
-          if (attempt < maxRetries) {
-            await delay(baseDelay * Math.pow(2, attempt));
-          }
+          // Network errors - short delay
+          const delayMs = Math.min(baseDelay * Math.pow(1.5, attempt), 3000);
+          logProgress(`Network error (${error.code}) - waiting ${Math.round(delayMs/1000)}s before retry ${attempt + 1}/${maxRetries}...`, 'warning');
+          await delay(delayMs);
         }
       }
     }
@@ -250,14 +256,14 @@ export class ScraperService {
       logProgress('Getting available brands...', 'info');
       
       // Add longer delay before request to avoid rate limiting (especially on startup)
-      await delay(10000);
+      await delay(15000); // Increased to 15 seconds
       
       try {
-        // Use retry logic for rate limit errors with more retries and longer delays
+        // Use retry logic for rate limit errors with more retries and shorter delays (proxy rotation helps)
         const response = await this.makeRequestWithRetry(
-          () => this.apiClient.get('/makers.php3'),
-          5, // max retries (increased from 3)
-          10000 // base delay for retries (10s, 20s, 40s, 80s, 160s)
+          (config = {}) => this.apiClient.get('/makers.php3', config),
+          6, // max retries
+          3000 // base delay for retries (reduced due to proxy rotation)
         );
       
       // Extract brands from HTML response
@@ -480,9 +486,9 @@ export class ScraperService {
       
       // Make request to search API
       const response = await this.makeRequestWithRetry(
-        () => this.apiClient.get(searchUrl),
+        (config = {}) => this.apiClient.get(searchUrl, config),
         3, // max retries
-        3000 // base delay for retries
+        2000 // base delay for retries (reduced due to proxy rotation)
       );
       
       const html = response.data;
@@ -815,9 +821,9 @@ export class ScraperService {
       
       // Use retry logic for rate limit errors
       const response = await this.makeRequestWithRetry(
-        () => this.apiClient.get(searchUrl),
+        (config = {}) => this.apiClient.get(searchUrl, config),
         3, // max retries
-        3000 // base delay for retries
+        2000 // base delay for retries (reduced due to proxy rotation)
       );
       
       const html = response.data;
@@ -1008,14 +1014,14 @@ export class ScraperService {
   async getDeviceImageUrl(deviceUrl) {
     try {
       const url = deviceUrl.startsWith('http') ? deviceUrl : this.baseUrl + '/' + deviceUrl;
-      // Increased delay to avoid rate limiting
-      await delay(2000);
+      // Shorter delay due to proxy rotation
+      await delay(1000);
       
       // Use retry logic for rate limit errors
       const response = await this.makeRequestWithRetry(
-        () => this.apiClient.get(url),
+        (config = {}) => this.apiClient.get(url, config),
         3, // max retries
-        3000 // base delay for retries (3s, 6s, 12s)
+        1500 // base delay for retries (reduced due to proxy rotation)
       );
       const html = response.data;
       
@@ -1139,9 +1145,9 @@ export class ScraperService {
       const url = deviceUrl.startsWith('http') ? deviceUrl : this.baseUrl + '/' + deviceUrl;
       
       const response = await this.makeRequestWithRetry(
-        () => this.apiClient.get(url),
+        (config = {}) => this.apiClient.get(url, config),
         3,
-        3000
+        2000 // reduced delay due to proxy rotation
       );
       const html = response.data;
       
@@ -1198,9 +1204,9 @@ export class ScraperService {
       const url = deviceUrl.startsWith('http') ? deviceUrl : this.baseUrl + '/' + deviceUrl;
       
       const response = await this.makeRequestWithRetry(
-        () => this.apiClient.get(url),
+        (config = {}) => this.apiClient.get(url, config),
         3,
-        3000
+        2000 // reduced delay due to proxy rotation
       );
       const html = response.data;
       
@@ -1260,14 +1266,14 @@ export class ScraperService {
   async getDeviceAnnounced(deviceUrl) {
     try {
       const url = deviceUrl.startsWith('http') ? deviceUrl : this.baseUrl + '/' + deviceUrl;
-      // Increased delay to avoid rate limiting
-      await delay(4000);
+      // Reduced delay due to proxy rotation
+      await delay(1500);
       
       // Use retry logic for rate limit errors
       const response = await this.makeRequestWithRetry(
-        () => this.apiClient.get(url),
+        (config = {}) => this.apiClient.get(url, config),
         3, // max retries
-        3000 // base delay for retries (3s, 6s, 12s)
+        2000 // base delay for retries (reduced due to proxy rotation)
       );
       const html = response.data;
       
@@ -1598,7 +1604,7 @@ export class ScraperService {
           
           // Fetch page meta (model name + release year) to correct name and fill releaseYear
           try {
-            await delay(2000);
+            await delay(1000); // reduced delay due to proxy rotation
             const meta = await this.getDevicePageMeta(device.url);
             if (meta.modelName) {
               device.name = meta.modelName;
@@ -1643,8 +1649,8 @@ export class ScraperService {
             });
           }
           
-          // Add delay between device processing (increased to avoid rate limiting)
-          await delay(CONFIG.DELAYS.between_requests || 5000);
+        // Add delay between device processing (reduced due to proxy rotation)
+        await delay(CONFIG.DELAYS.between_requests || 2000);
         } catch (error) {
           logProgress(`  Error processing device ${device.name}: ${error.message}`, 'error');
           // Add fallback model data with minimal info
@@ -1814,8 +1820,8 @@ export class ScraperService {
         const brandData = await this.scrapeBrand(brandObj, options);
         results.push(brandData);
         
-        // Add delay between brand scraping
-        await delay(CONFIG.DELAYS.between_brands || 3000);
+        // Add delay between brand scraping (reduced due to proxy rotation)
+        await delay(CONFIG.DELAYS.between_brands || 1500);
       }
       
       return {
@@ -1857,9 +1863,9 @@ export class ScraperService {
       
       // Make request to search API
       const response = await this.makeRequestWithRetry(
-        () => this.apiClient.get(searchUrl),
+        (config = {}) => this.apiClient.get(searchUrl, config),
         3, // max retries
-        3000 // base delay for retries
+        2000 // base delay for retries (reduced due to proxy rotation)
       );
       
       const html = response.data;

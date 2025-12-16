@@ -46,8 +46,43 @@ async function handleDeviceSpecsJob(payload) {
   };
 }
 
+async function handleBrandListJob(payload) {
+  logProgress('JobQueue: scraping brand list from GSM Arena', 'info');
+  
+  try {
+    // Scrape brands with retry logic and longer delays
+    const brands = await scraperService.getAllBrands();
+    
+    if (!brands || brands.length === 0) {
+      throw new Error('No brands returned from GSM Arena');
+    }
+    
+    // Save brands to database
+    for (const brand of brands) {
+      await db.saveBrand({
+        name: brand.name,
+        display_name: brand.display_name || brand.name,
+        url: brand.url || null,
+        is_active: brand.is_active !== undefined ? brand.is_active : true,
+        estimated_models: brand.estimated_models || 0
+      });
+    }
+    
+    logProgress(`JobQueue: saved ${brands.length} brands to database`, 'success');
+    
+    return {
+      total_brands: brands.length,
+      message: 'Brand list scraped and saved successfully'
+    };
+  } catch (error) {
+    logProgress(`JobQueue: brand list scraping failed: ${error.message}`, 'error');
+    throw error;
+  }
+}
+
 jobQueue.registerHandler('brand_scrape', handleBrandJob);
 jobQueue.registerHandler('device_specs', handleDeviceSpecsJob);
+jobQueue.registerHandler('brand_list', handleBrandListJob);
 
 export function startJobQueue() {
   jobQueue.start();
@@ -60,6 +95,10 @@ export function enqueueBrandScrape(brand, options = {}) {
 
 export function enqueueDeviceSpecs(deviceId) {
   return jobQueue.enqueue('device_specs', { deviceId }, { deduplicate: true });
+}
+
+export function enqueueBrandList() {
+  return jobQueue.enqueue('brand_list', {}, { deduplicate: true });
 }
 
 export function getJob(jobId) {

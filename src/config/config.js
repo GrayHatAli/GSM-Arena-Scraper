@@ -37,30 +37,54 @@ export const CONFIG = {
     timeout: 60000
   },
 
-  // Request delays (in milliseconds)
+  // Request delays (in milliseconds) - reduced due to proxy rotation
   DELAYS: {
-    between_requests: 2000, // Increased from 1000 to 2000
-    between_models: 3000, // Increased from 2000 to 3000
-    between_brands: 5000, // Increased from 3000 to 5000
-    page_load: 2000
+    between_requests: 1500, // Reduced due to proxy rotation
+    between_models: 2000,   // Reduced due to proxy rotation
+    between_brands: 1500,   // Reduced due to proxy rotation
+    page_load: 1500         // Reduced due to proxy rotation
   },
 
-  // Rate limiting configuration
+  // Rate limiting configuration (optimized for proxy use)
   RATE_LIMIT: {
-    // Tokens per second (0.5 = 1 request per 2 seconds)
-    tokensPerSecond: 0.5,
-    // Bucket size (burst capacity)
-    bucketSize: 2,
-    // Minimum delay between requests (ms)
-    minDelay: 2000,
-    // Maximum delay between requests (ms)
-    maxDelay: 10000,
-    // Circuit breaker: number of failures before opening circuit
-    failureThreshold: 3,
-    // Circuit breaker: time to wait before retrying (ms)
-    resetTimeout: 60000, // 1 minute
-    // Maximum concurrent requests - disabled for sequential processing only
-    maxConcurrent: 1
+    // Tokens per second (increased for proxy rotation: 2.0 = 2 requests per second)
+    tokensPerSecond: 2.0,
+    // Bucket size (increased burst capacity)
+    bucketSize: 5,
+    // Minimum delay between requests (reduced due to proxy rotation)
+    minDelay: 1000,
+    // Maximum delay between requests (reduced)
+    maxDelay: 8000,
+    // Circuit breaker: number of failures before opening circuit (reduced)
+    failureThreshold: 2,
+    // Circuit breaker: time to wait before retrying (reduced)
+    resetTimeout: 30000, // 30 seconds
+    // Maximum concurrent requests (increased for proxy support)
+    maxConcurrent: 10,
+    // Minimum concurrent requests
+    minConcurrent: 5,
+    // Maximum concurrent requests limit
+    maxConcurrentLimit: 20,
+    // Enable adaptive concurrency adjustment
+    adaptiveConcurrency: true
+  },
+
+  // Proxy configuration
+  PROXY: {
+    // Enable proxy support (automatically enabled if ProxyList.txt exists)
+    enabled: true,
+    // Path to proxy list file
+    listFile: 'src/utils/ProxyList.txt',
+    // Request timeout when using proxy (ms)
+    timeout: 10000,
+    // Rotate proxy on error (429, timeout, etc.)
+    rotateOnError: true,
+    // Maximum failures per proxy before marking as unhealthy
+    maxFailuresPerProxy: 3,
+    // Health check interval (ms) - 0 to disable
+    healthCheckInterval: 300000, // 5 minutes
+    // Test URL for health checks
+    testUrl: 'http://httpbin.org/ip'
   },
 
   // User agent
@@ -81,7 +105,7 @@ export const CONFIG = {
   API: {
     port: 3002,
     host: '0.0.0.0',
-    timeout: 300000, // 5 minutes
-    maxConcurrent: 1 // Force sequential processing
+    timeout: 600000, // 10 minutes (increased due to higher concurrency)
+    maxConcurrent: 10 // Concurrent processing with proxies
   }
 };
