@@ -1,5 +1,6 @@
 import { getDatabase } from '../database/db.js';
 import { logProgress } from '../utils/ScraperUtils.js';
+import { JobLogger } from './JobLogger.js';
 
 const STATUS = {
   PENDING: 'pending',
@@ -147,60 +148,120 @@ export class JobQueue {
       return;
     }
 
+    // ایجاد JobLogger برای این job
+    const logger = new JobLogger(jobRow.id);
+    
+    // Log شروع job
+    logger.info(`Job started: ${jobRow.job_type}`, {
+      jobId: jobRow.id,
+      jobType: jobRow.job_type,
+      attempt: jobRow.attempts + 1,
+      maxAttempts: jobRow.max_attempts,
+      payload: JSON.parse(jobRow.payload || '{}')
+    });
+
+    // بروزرسانی status به processing
     db.prepare(
       `UPDATE scrape_jobs
        SET status = ?, started_at = ?, attempts = attempts + 1
        WHERE id = ?`
     ).run(STATUS.PROCESSING, now, jobRow.id);
 
+    logger.progress('Job status updated to processing');
+
     const handler = this.handlers[jobRow.job_type];
     if (!handler) {
+      logger.error(`No handler registered for job type: ${jobRow.job_type}`);
       logProgress(`No handler registered for job type ${jobRow.job_type}`, 'error');
-      this.failJob(jobRow.id, 'Missing handler');
+      this.failJob(jobRow.id, 'Missing handler', logger);
       this.scheduleNext(100);
       return;
     }
 
+    logger.debug('Handler found, executing job');
+
     try {
       const payload = JSON.parse(jobRow.payload || '{}');
-      const result = await handler(payload, this.mapJob(jobRow));
+      const jobData = this.mapJob(jobRow);
+      
+      // اجرای handler با logger
+      const result = await handler(payload, jobData, logger);
       const completedAt = new Date().toISOString();
 
+      // Log موفقیت
+      logger.success('Job completed successfully', {
+        result,
+        duration_ms: Date.now() - new Date(jobRow.started_at).getTime()
+      });
+
+      // بروزرسانی database
       db.prepare(
         `UPDATE scrape_jobs
          SET status = ?, completed_at = ?, last_error = NULL, result = ?
          WHERE id = ?`
       ).run(STATUS.COMPLETED, completedAt, JSON.stringify(result || null), jobRow.id);
 
+      logger.finish(true, result);
       this.scheduleNext(50);
+
     } catch (error) {
       const attempts = jobRow.attempts + 1;
       const maxAttempts = jobRow.max_attempts || 3;
+      
+      logger.error(`Job failed on attempt ${attempts}/${maxAttempts}`, {
+        error: error.message,
+        stack: error.stack,
+        attempt: attempts,
+        maxAttempts
+      });
+
       logProgress(`Job ${jobRow.id} failed (${attempts}/${maxAttempts}): ${error.message}`, 'warn');
 
       if (attempts >= maxAttempts) {
-        this.failJob(jobRow.id, error.message);
+        logger.error('Job failed permanently - max attempts reached');
+        this.failJob(jobRow.id, error.message, logger);
         this.scheduleNext(50);
       } else {
         const nextRun = new Date(Date.now() + this.pollInterval * Math.pow(2, attempts)).toISOString();
+        
+        logger.warn(`Scheduling retry`, {
+          nextRun,
+          delayMs: this.pollInterval * Math.pow(2, attempts),
+          attempt: attempts + 1,
+          maxAttempts
+        });
+
         db.prepare(
           `UPDATE scrape_jobs
            SET status = ?, run_at = ?, last_error = ?
            WHERE id = ?`
         ).run(STATUS.PENDING, nextRun, error.message, jobRow.id);
+        
         this.scheduleNext(this.pollInterval);
       }
     }
   }
 
-  failJob(jobId, message) {
+  failJob(jobId, message, logger = null) {
     const db = getDatabase();
     if (!db) return;
+    
+    const completedAt = new Date().toISOString();
     db.prepare(
       `UPDATE scrape_jobs
        SET status = ?, completed_at = ?, last_error = ?
        WHERE id = ?`
-    ).run(STATUS.FAILED, new Date().toISOString(), message, jobId);
+    ).run(STATUS.FAILED, completedAt, message, jobId);
+    
+    // Log failure if logger available
+    if (logger) {
+      logger.finish(false, { error: message });
+    } else {
+      // Create temporary logger for failure logging
+      const tempLogger = new JobLogger(jobId);
+      tempLogger.error('Job failed permanently', { error: message });
+      tempLogger.finish(false, { error: message });
+    }
   }
 }
 

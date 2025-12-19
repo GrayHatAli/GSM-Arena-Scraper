@@ -349,4 +349,76 @@ export class ScraperController {
       return ResponseHelper.error('Failed to get jobs list', error.message);
     }
   }
+
+  /**
+   * Get logs for a specific job
+   * @param {string} jobId - Job ID
+   * @param {Object} filters - Optional filters (level, limit)
+   * @returns {Object}
+   */
+  async getJobLogs(jobId, filters = {}) {
+    try {
+      const logs = await db.getJobLogs(parseInt(jobId), filters);
+      return ResponseHelper.success('Job logs retrieved successfully', {
+        jobId: parseInt(jobId),
+        logs,
+        count: logs.length,
+        filters
+      });
+    } catch (error) {
+      return ResponseHelper.error('Failed to get job logs', error.message);
+    }
+  }
+
+  /**
+   * Get all job logs with filters
+   * @param {Object} filters - Optional filters (jobId, level, jobType, limit)
+   * @returns {Object}
+   */
+  async getAllJobLogs(filters = {}) {
+    try {
+      const logs = await db.getAllJobLogs(filters);
+      return ResponseHelper.success('All job logs retrieved successfully', {
+        logs,
+        count: logs.length,
+        filters
+      });
+    } catch (error) {
+      return ResponseHelper.error('Failed to get all job logs', error.message);
+    }
+  }
+
+  /**
+   * Get job logs statistics
+   * @param {Object} filters - Optional filters (jobType, jobId)
+   * @returns {Object}
+   */
+  async getJobLogsStats(filters = {}) {
+    try {
+      const stats = await db.getJobLogsStats(filters);
+      return ResponseHelper.success('Job logs statistics retrieved successfully', {
+        stats,
+        filters
+      });
+    } catch (error) {
+      return ResponseHelper.error('Failed to get job logs statistics', error.message);
+    }
+  }
+
+  /**
+   * Clean up old job logs
+   * @param {number} daysToKeep - Days to keep logs (default: 30)
+   * @returns {Object}
+   */
+  async cleanupJobLogs(daysToKeep = 30) {
+    try {
+      const deletedCount = await db.cleanupOldLogs(daysToKeep);
+      return ResponseHelper.success('Job logs cleanup completed', {
+        deletedLogs: deletedCount,
+        daysToKeep
+      });
+    } catch (error) {
+      return ResponseHelper.error('Failed to cleanup job logs', error.message);
+    }
+  }
 }

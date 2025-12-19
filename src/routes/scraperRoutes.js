@@ -19,6 +19,10 @@ export class ScraperRoutes {
       'POST /devices/search': this.searchDevices.bind(this),
       'GET /jobs/:jobId': this.getJobStatus.bind(this),
       'GET /jobs': this.getJobsList.bind(this),
+      'GET /jobs/:jobId/logs': this.getJobLogs.bind(this),
+      'GET /logs': this.getAllJobLogs.bind(this),
+      'GET /logs/stats': this.getJobLogsStats.bind(this),
+      'POST /logs/cleanup': this.cleanupJobLogs.bind(this),
       'GET /data/latest': this.getLatestData.bind(this),
       'POST /data/save': this.saveData.bind(this)
     };
@@ -275,6 +279,101 @@ export class ScraperRoutes {
       res.status(500).json({
         success: false,
         message: 'Failed to get brand devices',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Get logs for a specific job
+   * @param {Object} req - Request object
+   * @param {Object} res - Response object
+   */
+  async getJobLogs(req, res) {
+    try {
+      const { jobId } = req.params;
+      const { level, limit } = req.query;
+      
+      const filters = {};
+      if (level) filters.level = level;
+      if (limit) filters.limit = parseInt(limit, 10);
+      
+      const result = await this.controller.getJobLogs(jobId, filters);
+      res.status(result.statusCode || 200).json(result);
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: 'Failed to get job logs',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Get all job logs with filters
+   * @param {Object} req - Request object
+   * @param {Object} res - Response object
+   */
+  async getAllJobLogs(req, res) {
+    try {
+      const { jobId, level, jobType, limit } = req.query;
+      
+      const filters = {};
+      if (jobId) filters.jobId = parseInt(jobId, 10);
+      if (level) filters.level = level;
+      if (jobType) filters.jobType = jobType;
+      if (limit) filters.limit = parseInt(limit, 10);
+      
+      const result = await this.controller.getAllJobLogs(filters);
+      res.status(result.statusCode || 200).json(result);
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: 'Failed to get all job logs',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Get job logs statistics
+   * @param {Object} req - Request object
+   * @param {Object} res - Response object
+   */
+  async getJobLogsStats(req, res) {
+    try {
+      const { jobType, jobId } = req.query;
+      
+      const filters = {};
+      if (jobType) filters.jobType = jobType;
+      if (jobId) filters.jobId = parseInt(jobId, 10);
+      
+      const result = await this.controller.getJobLogsStats(filters);
+      res.status(result.statusCode || 200).json(result);
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: 'Failed to get job logs statistics',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Clean up old job logs
+   * @param {Object} req - Request object
+   * @param {Object} res - Response object
+   */
+  async cleanupJobLogs(req, res) {
+    try {
+      const { daysToKeep = 30 } = req.body;
+      
+      const result = await this.controller.cleanupJobLogs(daysToKeep);
+      res.status(result.statusCode || 200).json(result);
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: 'Failed to cleanup job logs',
         error: error.message
       });
     }

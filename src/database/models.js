@@ -418,3 +418,228 @@ export async function getModelsForBrandAndYear(brandName, minYear) {
   return models.filter(model => !model.release_year || model.release_year >= minYear);
 }
 
+/**
+ * ثبت job log در database
+ * @param {number} jobId - شناسه job
+ * @param {string} level - سطح log (info, warn, error, debug, success)
+ * @param {string} message - پیام log
+ * @param {Object} details - جزئیات اضافی (JSON)
+ * @returns {Object} - نتیجه insert
+ */
+export async function saveJobLog(jobId, level, message, details = null) {
+  const db = getDatabase();
+  if (!db) throw new Error('Database not available');
+
+  try {
+    const stmt = db.prepare(`
+      INSERT INTO job_logs (job_id, log_level, message, details)
+      VALUES (?, ?, ?, ?)
+    `);
+
+    const detailsJson = details ? JSON.stringify(details) : null;
+    const result = stmt.run(jobId, level, message, detailsJson);
+    
+    return {
+      id: result.lastInsertRowid,
+      jobId: jobId,
+      level: level,
+      message: message
+    };
+  } catch (error) {
+    console.error(`Failed to save job log: ${error.message}`);
+    throw error;
+  }
+}
+
+/**
+ * دریافت logs یک job خاص
+ * @param {number} jobId - شناسه job
+ * @param {Object} filters - فیلترهای اختیاری
+ * @returns {Array} - لیست logs
+ */
+export async function getJobLogs(jobId, filters = {}) {
+  const db = getDatabase();
+  if (!db) return [];
+
+  try {
+    let query = 'SELECT * FROM job_logs WHERE job_id = ?';
+    const params = [jobId];
+
+    if (filters.level) {
+      query += ' AND log_level = ?';
+      params.push(filters.level);
+    }
+
+    if (filters.limit && filters.limit > 0) {
+      query += ` ORDER BY timestamp DESC LIMIT ${parseInt(filters.limit, 10)}`;
+    } else {
+      query += ' ORDER BY timestamp ASC';
+    }
+
+    const rows = db.prepare(query).all(...params);
+    
+    return rows.map(row => ({
+      ...row,
+      details: row.details ? JSON.parse(row.details) : null
+    }));
+    
+  } catch (error) {
+    logProgress(`Error getting job logs: ${error.message}`, 'error');
+    return [];
+  }
+}
+
+/**
+ * دریافت logs تمام jobs با فیلتر
+ * @param {Object} filters - فیلترهای اختیاری
+ * @returns {Array} - لیست logs
+ */
+export async function getAllJobLogs(filters = {}) {
+  const db = getDatabase();
+  if (!db) return [];
+
+  try {
+    let query = `
+      SELECT jl.*, sj.job_type 
+      FROM job_logs jl 
+      LEFT JOIN scrape_jobs sj ON jl.job_id = sj.id 
+      WHERE 1=1
+    `;
+    const params = [];
+
+    if (filters.jobId) {
+      query += ' AND jl.job_id = ?';
+      params.push(filters.jobId);
+    }
+
+    if (filters.level) {
+      query += ' AND jl.log_level = ?';
+      params.push(filters.level);
+    }
+
+    if (filters.jobType) {
+      query += ' AND sj.job_type = ?';
+      params.push(filters.jobType);
+    }
+
+    if (filters.limit && filters.limit > 0) {
+      query += ` ORDER BY jl.timestamp DESC LIMIT ${parseInt(filters.limit, 10)}`;
+    } else {
+      query += ' ORDER BY jl.timestamp DESC';
+    }
+
+    const rows = db.prepare(query).all(...params);
+    
+    return rows.map(row => ({
+      ...row,
+      details: row.details ? JSON.parse(row.details) : null
+    }));
+    
+  } catch (error) {
+    logProgress(`Error getting all job logs: ${error.message}`, 'error');
+    return [];
+  }
+}
+
+/**
+ * دریافت آمار logs
+ * @param {Object} filters - فیلترهای اختیاری
+ * @returns {Object} - آمار logs
+ */
+export async function getJobLogsStats(filters = {}) {
+  const db = getDatabase();
+  if (!db) return {};
+
+  try {
+    let baseQuery = `
+      SELECT 
+        COUNT(*) as total_logs,
+        COUNT(CASE WHEN log_level = 'info' THEN 1 END) as info_logs,
+        COUNT(CASE WHEN log_level = 'warn' THEN 1 END) as warn_logs,
+        COUNT(CASE WHEN log_level = 'error' THEN 1 END) as error_logs,
+        COUNT(CASE WHEN log_level = 'debug' THEN 1 END) as debug_logs,
+        COUNT(CASE WHEN log_level = 'success' THEN 1 END) as success_logs
+      FROM job_logs jl
+      LEFT JOIN scrape_jobs sj ON jl.job_id = sj.id
+      WHERE 1=1
+    `;
+    const params = [];
+
+    if (filters.jobType) {
+      baseQuery += ' AND sj.job_type = ?';
+      params.push(filters.jobType);
+    }
+
+    if (filters.jobId) {
+      baseQuery += ' AND jl.job_id = ?';
+      params.push(filters.jobId);
+    }
+
+    const stats = db.prepare(baseQuery).get(...params);
+
+    // Get job type breakdown
+    const jobTypeQuery = `
+      SELECT sj.job_type, COUNT(*) as log_count
+      FROM job_logs jl
+      LEFT JOIN scrape_jobs sj ON jl.job_id = sj.id
+      WHERE sj.job_type IS NOT NULL
+      GROUP BY sj.job_type
+      ORDER BY log_count DESC
+    `;
+    
+    const jobTypeStats = db.prepare(jobTypeQuery).all();
+    
+    return {
+      total_logs: stats.total_logs || 0,
+      by_level: {
+        info: stats.info_logs || 0,
+        warn: stats.warn_logs || 0,
+        error: stats.error_logs || 0,
+        debug: stats.debug_logs || 0,
+        success: stats.success_logs || 0
+      },
+      by_job_type: jobTypeStats.reduce((acc, row) => {
+        acc[row.job_type] = row.log_count;
+        return acc;
+      }, {})
+    };
+    
+  } catch (error) {
+    logProgress(`Error getting job logs stats: ${error.message}`, 'error');
+    return {};
+  }
+}
+
+/**
+ * پاک کردن logs قدیمی
+ * @param {number} daysToKeep - تعداد روزهای نگه‌داری logs
+ * @returns {number} - تعداد logs پاک شده
+ */
+export async function cleanupOldLogs(daysToKeep = 30) {
+  const db = getDatabase();
+  if (!db) return 0;
+
+  try {
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - daysToKeep);
+    const cutoffISO = cutoffDate.toISOString();
+
+    const stmt = db.prepare(`
+      DELETE FROM job_logs 
+      WHERE timestamp < ?
+    `);
+
+    const result = stmt.run(cutoffISO);
+    
+    if (result.changes > 0) {
+      logProgress(`Cleaned up ${result.changes} old job logs (older than ${daysToKeep} days)`, 'info');
+    }
+
+    return result.changes;
+    
+  } catch (error) {
+    logProgress(`Error cleaning up old logs: ${error.message}`, 'error');
+    return 0;
+  }
+}
+

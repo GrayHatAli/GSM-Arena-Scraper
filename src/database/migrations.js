@@ -36,6 +36,10 @@ export async function runMigrations() {
     pool.exec(SCHEMA.jobs);
     logProgress('Jobs table created/verified', 'success');
 
+    // Create job logs table
+    pool.exec(SCHEMA.jobLogs);
+    logProgress('Job logs table created/verified', 'success');
+
     logProgress('All migrations completed successfully', 'success');
     return true;
   } catch (error) {

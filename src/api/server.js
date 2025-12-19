@@ -34,6 +34,10 @@ export class ScraperAPI {
     this.app.post('/devices/search', routeDefinitions['POST /devices/search']);
     this.app.get('/jobs', routeDefinitions['GET /jobs']);
     this.app.get('/jobs/:jobId', routeDefinitions['GET /jobs/:jobId']);
+    this.app.get('/jobs/:jobId/logs', routeDefinitions['GET /jobs/:jobId/logs']);
+    this.app.get('/logs', routeDefinitions['GET /logs']);
+    this.app.get('/logs/stats', routeDefinitions['GET /logs/stats']);
+    this.app.post('/logs/cleanup', routeDefinitions['POST /logs/cleanup']);
     this.app.get('/data/latest', routeDefinitions['GET /data/latest']);
     this.app.post('/data/save', routeDefinitions['POST /data/save']);
 
@@ -65,6 +69,10 @@ export class ScraperAPI {
       console.log(`   POST /brands/:brandName/devices - Get devices for a brand`);
       console.log(`   GET  /devices/:deviceId/specifications - Get device specifications`);
       console.log(`   POST /devices/search - Search devices (with filters and deviceId)`);
+      console.log(`   GET  /jobs/:jobId/logs - Get logs for specific job`);
+      console.log(`   GET  /logs - Get all job logs (with filters)`);
+      console.log(`   GET  /logs/stats - Get job logs statistics`);
+      console.log(`   POST /logs/cleanup - Cleanup old job logs`);
       console.log(`   GET  /data/latest - Get latest data`);
       console.log(`   POST /data/save - Save data`);
     });

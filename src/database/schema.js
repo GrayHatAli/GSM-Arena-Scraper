@@ -73,6 +73,22 @@ export const SCHEMA = {
     );
     CREATE INDEX IF NOT EXISTS idx_jobs_status_run_at ON scrape_jobs(status, run_at);
     CREATE INDEX IF NOT EXISTS idx_jobs_type ON scrape_jobs(job_type);
+  `,
+
+  jobLogs: `
+    CREATE TABLE IF NOT EXISTS job_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      job_id INTEGER NOT NULL,
+      log_level TEXT NOT NULL,
+      message TEXT NOT NULL,
+      details TEXT,
+      timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (job_id) REFERENCES scrape_jobs(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_job_logs_job_id ON job_logs(job_id);
+    CREATE INDEX IF NOT EXISTS idx_job_logs_level ON job_logs(log_level);
+    CREATE INDEX IF NOT EXISTS idx_job_logs_timestamp ON job_logs(timestamp);
   `
 };
 
