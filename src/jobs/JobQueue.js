@@ -191,7 +191,7 @@ export class JobQueue {
       // Log موفقیت
       logger.success('Job completed successfully', {
         result,
-        duration_ms: Date.now() - new Date(jobRow.started_at).getTime()
+        duration_ms: Date.now() - new Date(now).getTime()
       });
 
       // بروزرسانی database
@@ -266,4 +266,3 @@ export class JobQueue {
 }
 
 export const JOB_STATUS = STATUS;
-

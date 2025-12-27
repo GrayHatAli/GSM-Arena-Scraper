@@ -23,7 +23,7 @@ export class JobLogger {
    * @param {Object} details - جزئیات اضافی (JSON)
    */
   info(message, details = null) {
-    this.log('info', message, details);
+    return this.log('info', message, details);
   }
 
   /**
@@ -32,7 +32,7 @@ export class JobLogger {
    * @param {Object} details - جزئیات اضافی (JSON)
    */
   warn(message, details = null) {
-    this.log('warn', message, details);
+    return this.log('warn', message, details);
   }
 
   /**
@@ -41,7 +41,7 @@ export class JobLogger {
    * @param {Object} details - جزئیات اضافی (JSON)
    */
   error(message, details = null) {
-    this.log('error', message, details);
+    return this.log('error', message, details);
   }
 
   /**
@@ -50,7 +50,7 @@ export class JobLogger {
    * @param {Object} details - جزئیات اضافی (JSON)
    */
   debug(message, details = null) {
-    this.log('debug', message, details);
+    return this.log('debug', message, details);
   }
 
   /**
@@ -59,7 +59,7 @@ export class JobLogger {
    * @param {Object} details - جزئیات اضافی (JSON)
    */
   success(message, details = null) {
-    this.log('success', message, details);
+    return this.log('success', message, details);
   }
 
   /**
@@ -68,10 +68,10 @@ export class JobLogger {
    * @param {string} message - پیام log
    * @param {Object} details - جزئیات اضافی (JSON)
    */
-  log(level, message, details = null) {
+  async log(level, message, details = null) {
     try {
       // ثبت در database
-      this.saveToDatabase(level, message, details);
+      await this.saveToDatabase(level, message, details);
       
       // ثبت در console با فرمت مناسب
       this.logToConsole(level, message, details);
@@ -87,9 +87,9 @@ export class JobLogger {
    * @param {string} message - پیام log
    * @param {Object} details - جزئیات اضافی
    */
-  saveToDatabase(level, message, details) {
+  async saveToDatabase(level, message, details) {
     try {
-      saveJobLog(this.jobId, level, message, details);
+      await saveJobLog(this.jobId, level, message, details);
     } catch (error) {
       console.error(`Failed to save job log to database: ${error.message}`);
     }
