@@ -16,18 +16,27 @@ export class ProxyManager {
     this.currentIndex = 0;
     this.failedProxies = new Set();
     this.proxyStats = new Map(); // آمار هر پروکسی
+    this.enabled = options.enabled !== false;
+    this.disabledUntil = 0;
+    this._refreshInFlight = null;
+    this.failureWindow = {
+      startedAt: Date.now(),
+      count: 0
+    };
+    // Options are primarily provided by config/config.js (PROXY). Accept any overrides via the `options` argument.
     this.options = {
-      maxFailuresPerProxy: options.maxFailuresPerProxy || 3,
-      healthCheckInterval: options.healthCheckInterval || 300000, // 5 دقیقه
-      rotateOnError: options.rotateOnError !== false,
       ...options
     };
     
     // Load proxies from file
-    this.loadProxies();
+    if (this.enabled) {
+      this.loadProxies();
+    } else {
+      logProgress('Proxy support disabled by configuration.', 'info');
+    }
     
     // Start health check timer
-    if (this.options.healthCheckInterval > 0) {
+    if (this.enabled && this.options.healthCheckInterval > 0) {
       this.startHealthCheckTimer();
     }
     
@@ -39,7 +48,7 @@ export class ProxyManager {
    */
   loadProxies() {
     try {
-      const proxyListPath = path.join(__dirname, 'ProxyList.txt');
+      const proxyListPath = this.getProxyListPath();
       
       if (!fs.existsSync(proxyListPath)) {
         logProgress('ProxyList.txt not found. Running without proxy support.', 'warning');
@@ -73,25 +82,64 @@ export class ProxyManager {
    * پارس کردن خط پروکسی (IP:Port یا IP:Port:Username:Password)
    */
   parseProxyLine(line) {
-    const parts = line.split(':');
-    
-    if (parts.length < 2) {
-      logProgress(`Invalid proxy format: ${line}`, 'warning');
+    let normalized = line.trim();
+    let protocol = null;
+    let host = null;
+    let port = null;
+    let auth = null;
+
+    if (!normalized) {
       return null;
     }
 
+    if (normalized.includes('://')) {
+      try {
+        const url = new URL(normalized);
+        protocol = url.protocol ? url.protocol.replace(':', '').toLowerCase() : null;
+        host = url.hostname;
+        port = url.port ? parseInt(url.port, 10) : null;
+        if (url.username || url.password) {
+          auth = {
+            username: decodeURIComponent(url.username || ''),
+            password: decodeURIComponent(url.password || '')
+          };
+        }
+      } catch (error) {
+        logProgress(`Invalid proxy URL format: ${line}`, 'warning');
+        return null;
+      }
+    }
+
+    if (!host || !port) {
+      const parts = normalized.split(':');
+    
+      if (parts.length < 2) {
+        logProgress(`Invalid proxy format: ${line}`, 'warning');
+        return null;
+      }
+
+      host = parts[0].trim();
+      port = parseInt(parts[1].trim(), 10);
+
+      // Check for authentication
+      if (parts.length >= 4) {
+        auth = {
+          username: parts[2].trim(),
+          password: parts[3].trim()
+        };
+      }
+    }
+
     const proxy = {
-      host: parts[0].trim(),
-      port: parseInt(parts[1].trim(), 10),
-      id: `${parts[0].trim()}:${parts[1].trim()}`
+      host,
+      port,
+      protocol: protocol || null,
+      id: protocol ? `${protocol}://${host}:${port}` : `${host}:${port}`
     };
 
     // Check for authentication
-    if (parts.length >= 4) {
-      proxy.auth = {
-        username: parts[2].trim(),
-        password: parts[3].trim()
-      };
+    if (auth && auth.username && auth.password) {
+      proxy.auth = auth;
     }
 
     // Validate IP and port
@@ -196,6 +244,7 @@ export class ProxyManager {
     stats.failedRequests++;
     stats.consecutiveFailures++;
     stats.lastFailure = Date.now();
+    this.trackFailureWindow();
 
     if (errorType === 'rate_limit') {
       stats.rateLimitedRequests++;
@@ -241,7 +290,7 @@ export class ProxyManager {
     if (!proxy) return null;
 
     const axiosProxy = {
-      protocol: 'http',
+      protocol: proxy.protocol || 'http',
       host: proxy.host,
       port: proxy.port
     };
@@ -301,10 +350,10 @@ export class ProxyManager {
     try {
       const axiosProxy = this.toAxiosProxy(proxy);
       const startTime = Date.now();
-      
-      await axios.get('http://httpbin.org/ip', {
+
+      await axios.get(this.options.testUrl || 'http://httpbin.org/ip', {
         proxy: axiosProxy,
-        timeout: timeout,
+        timeout: timeout || this.options.timeout || 5000,
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
@@ -393,7 +442,7 @@ export class ProxyManager {
    * آیا پروکسی فعال است؟
    */
   isEnabled() {
-    return this.proxies.length > 0;
+    return this.enabled && this.proxies.length > 0;
   }
 
   /**
@@ -401,5 +450,246 @@ export class ProxyManager {
    */
   getHealthyProxyCount() {
     return this.getHealthyProxies().length;
+  }
+
+  /**
+   * Should proxies be used right now?
+   */
+  canUseProxy() {
+    if (!this.enabled || this.proxies.length === 0) {
+      return false;
+    }
+
+    if (Date.now() < this.disabledUntil) {
+      return false;
+    }
+
+    return this.getHealthyProxyCount() >= this.options.minHealthyProxies;
+  }
+
+  /**
+   * Track rolling window failures and temporarily disable proxy usage.
+   */
+  trackFailureWindow() {
+    const now = Date.now();
+    if (now - this.failureWindow.startedAt > this.options.failureWindowMs) {
+      this.failureWindow.startedAt = now;
+      this.failureWindow.count = 0;
+    }
+
+    this.failureWindow.count += 1;
+
+    if (this.failureWindow.count >= this.options.disableAfterFailures) {
+      this.disabledUntil = now + this.options.cooldownMs;
+      this.failureWindow.count = 0;
+      this.failureWindow.startedAt = now;
+      logProgress(
+        `Proxy usage disabled for ${Math.round(this.options.cooldownMs / 1000)}s after repeated failures`,
+        'warning'
+      );
+    }
+  }
+
+  /**
+   * Ensure the proxy list is healthy and refreshed with new proxies if needed.
+   */
+  async refreshProxyPool() {
+    if (!this.enabled) {
+      return { refreshed: false, reason: 'disabled' };
+    }
+
+    if (this._refreshInFlight) {
+      return this._refreshInFlight;
+    }
+
+    this._refreshInFlight = (async () => {
+      if (this.proxies.length === 0) {
+        this.loadProxies();
+      }
+
+      if (this.proxies.length === 0) {
+        return { refreshed: false, reason: 'no-proxies' };
+      }
+
+      logProgress('Checking proxy connectivity before scraping...', 'info');
+      const healthy = [];
+      const failed = [];
+
+      for (const proxy of this.proxies) {
+        const ok = await this.testProxyConnectivity(proxy, this.options.timeout || 5000);
+        if (ok) {
+          healthy.push(proxy);
+        } else {
+          failed.push(proxy);
+        }
+      }
+
+      if (failed.length > 0) {
+        logProgress(`Removing ${failed.length} failed proxies from list`, 'warning');
+      }
+
+      this.proxies = healthy;
+      this.proxyStats.clear();
+      this.failedProxies.clear();
+      this.currentIndex = 0;
+      for (const proxy of this.proxies) {
+        this.initProxyStats(proxy);
+      }
+
+      this.writeProxyList();
+
+      const needsNewProxies = failed.length > 0 || this.getHealthyProxyCount() < this.options.minHealthyProxies;
+      if (!needsNewProxies) {
+        return { refreshed: true, added: 0, removed: failed.length };
+      }
+
+      const newProxies = await this.fetchGeonixProxies();
+      if (newProxies.length === 0) {
+        logProgress('No new proxies found from Geonix source.', 'warning');
+        return { refreshed: true, added: 0, removed: failed.length };
+      }
+
+      const existingIds = new Set(this.proxies.map(proxy => proxy.id));
+      const uniqueNew = newProxies.filter(proxy => !existingIds.has(proxy.id));
+
+      if (uniqueNew.length > 0) {
+        for (const proxy of uniqueNew) {
+          this.proxies.push(proxy);
+          this.initProxyStats(proxy);
+        }
+        this.writeProxyList();
+        logProgress(`Added ${uniqueNew.length} new proxies from Geonix`, 'success');
+      }
+
+      return { refreshed: true, added: uniqueNew.length, removed: failed.length };
+    })();
+
+    try {
+      return await this._refreshInFlight;
+    } finally {
+      this._refreshInFlight = null;
+    }
+  }
+
+  /**
+   * Fetch new proxies from Geonix (Iran list) with optional protocol mapping.
+   */
+  async fetchGeonixProxies() {
+    const axios = (await import('axios')).default;
+    const proxies = [];
+
+    try {
+      const listResponse = await axios.get(this.options.sourceListUrl, {
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        },
+        timeout: this.options.timeout || 10000
+      });
+
+      if (typeof listResponse.data === 'string') {
+        const lines = listResponse.data
+          .split('\n')
+          .map(line => line.trim())
+          .filter(Boolean);
+
+        for (const line of lines) {
+          const parsed = this.parseProxyLine(line);
+          if (!parsed) continue;
+          if (!parsed.protocol) {
+            parsed.protocol = 'http';
+            parsed.id = `http://${parsed.host}:${parsed.port}`;
+          }
+          proxies.push(parsed);
+        }
+
+        return proxies;
+      }
+
+      const list = Array.isArray(listResponse.data) ? listResponse.data : [];
+      if (list.length === 0) {
+        return [];
+      }
+
+      const proxyTypeMap = await this.fetchGeonixProxyTypes();
+      const hasTypeMap = proxyTypeMap.size > 0;
+
+      for (const entry of list) {
+        if (!entry?.ip) continue;
+        const line = entry.ip.trim();
+        const parsed = this.parseProxyLine(line);
+        if (!parsed) continue;
+
+        const type = proxyTypeMap.get(parsed.host);
+        if (hasTypeMap && !type) {
+          continue;
+        }
+
+        if (type) {
+          parsed.protocol = type;
+          parsed.id = `${type}://${parsed.host}:${parsed.port}`;
+        } else if (!parsed.protocol) {
+          parsed.protocol = 'http';
+          parsed.id = `http://${parsed.host}:${parsed.port}`;
+        }
+
+        proxies.push(parsed);
+      }
+    } catch (error) {
+      logProgress(`Failed to fetch Geonix proxies: ${error.message}`, 'error');
+    }
+
+    return proxies;
+  }
+
+  async fetchGeonixProxyTypes() {
+    const axios = (await import('axios')).default;
+    const proxyTypeMap = new Map();
+
+    try {
+      const response = await axios.get(this.options.sourceTypeUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        },
+        timeout: this.options.timeout || 10000
+      });
+
+      const list = Array.isArray(response.data) ? response.data : [];
+      const countryLabel = (this.options.sourceCountryLabel || '').toLowerCase();
+
+      for (const entry of list) {
+        if (!entry?.ip || !entry?.proxyType || !entry?.country) continue;
+        if (entry.country.toLowerCase() !== countryLabel) continue;
+
+        const type = entry.proxyType.toLowerCase();
+        if (type === 'http' || type === 'https') {
+          proxyTypeMap.set(entry.ip.trim(), type);
+        }
+      }
+    } catch (error) {
+      logProgress(`Failed to fetch Geonix proxy types: ${error.message}`, 'warning');
+    }
+
+    return proxyTypeMap;
+  }
+
+  getProxyListPath() {
+    return this.options.listFile
+      ? path.resolve(this.options.listFile)
+      : path.join(__dirname, 'ProxyList.txt');
+  }
+
+  writeProxyList() {
+    const proxyListPath = this.getProxyListPath();
+    const lines = this.proxies.map(proxy => this.formatProxyLine(proxy));
+    fs.writeFileSync(proxyListPath, lines.join('\n') + '\n', 'utf-8');
+  }
+
+  formatProxyLine(proxy) {
+    const authSegment = proxy.auth
+      ? `${encodeURIComponent(proxy.auth.username)}:${encodeURIComponent(proxy.auth.password)}@`
+      : '';
+    const protocol = proxy.protocol ? `${proxy.protocol}://` : '';
+    return `${protocol}${authSegment}${proxy.host}:${proxy.port}`;
   }
 }

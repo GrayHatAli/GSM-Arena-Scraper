@@ -75,6 +75,16 @@ export const CONFIG = {
     enabled: true,
     // Path to proxy list file
     listFile: 'src/utils/ProxyList.txt',
+    // Fall back to direct requests when proxies are unhealthy/unavailable
+    fallbackToDirect: true,
+    // Minimum healthy proxies required before using proxies
+    minHealthyProxies: 3,
+    // Disable proxy usage after this many failures within the window
+    disableAfterFailures: 20,
+    // Rolling window for failure counting (ms)
+    failureWindowMs: 60000,
+    // Cooldown period before re-enabling proxies (ms)
+    cooldownMs: 300000,
     // Request timeout when using proxy (ms)
     timeout: 10000,
     // Rotate proxy on error (429, timeout, etc.)
@@ -84,7 +94,12 @@ export const CONFIG = {
     // Health check interval (ms) - 0 to disable
     healthCheckInterval: 300000, // 5 minutes
     // Test URL for health checks
-    testUrl: 'http://httpbin.org/ip'
+    testUrl: 'http://httpbin.org/ip',
+    sourceListUrl: 'https://api.proxyscrape.com/v4/free-proxy-list/get?request=displayproxies&protocol=http&timeout=5000&country=all&ssl=all&anonymity=all&skip=0&limit=20',
+    sourceTypeUrl: null,
+    sourceCountry: null,
+    sourceCountryLabel: null,
+    sourceCount: 20
   },
 
   // User agent

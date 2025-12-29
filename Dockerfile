@@ -3,6 +3,7 @@ FROM node:22-alpine
 
 # Install dependencies for Puppeteer
 RUN apk add --no-cache \
+    curl \
     chromium \
     nss \
     freetype \

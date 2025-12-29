@@ -30,6 +30,7 @@ export class ScraperService {
     this._brandsCache = null;
     this._brandsCacheTime = null;
     this._brandsCacheTTL = 60 * 60 * 1000; // 1 hour in milliseconds
+    this._proxyReadyPromise = null;
     
     // Initialize Request Queue with rate limiting and proxy support
     this.requestQueue = new RequestQueue({
@@ -45,6 +46,22 @@ export class ScraperService {
     });
   }
 
+  async ensureProxyPoolReady() {
+    if (!this.requestQueue?.proxyManager?.isEnabled()) {
+      return;
+    }
+
+    if (!this._proxyReadyPromise) {
+      this._proxyReadyPromise = this.requestQueue.proxyManager
+        .refreshProxyPool()
+        .catch(error => {
+          logProgress(`Proxy refresh failed: ${error.message}`, 'warning');
+        });
+    }
+
+    await this._proxyReadyPromise;
+  }
+
   /**
    * Make HTTP request with retry logic, proxy rotation, and exponential backoff
    * @param {Function} requestFn - Function that returns a promise for the HTTP request
@@ -55,6 +72,7 @@ export class ScraperService {
   async makeRequestWithRetry(requestFn, maxRetries = 3, baseDelay = 1000) {
     let lastError;
     let currentProxy = null;
+    let forceDirect = false;
     
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
@@ -69,7 +87,7 @@ export class ScraperService {
           
           // Execute the request function with the config
           return await requestFn(config);
-        });
+        }, { forceDirect });
         
         return result;
         
@@ -99,6 +117,11 @@ export class ScraperService {
         
         if (!isRetryable || attempt === maxRetries) {
           throw error;
+        }
+
+        // If proxy-based request failed, retry next attempt without proxy when allowed
+        if (currentProxy && this.requestQueue.proxyManager?.options?.fallbackToDirect) {
+          forceDirect = true;
         }
         
         // For 429 errors with proxy rotation
@@ -246,6 +269,7 @@ export class ScraperService {
    */
   async getAllBrands() {
     try {
+      await this.ensureProxyPoolReady();
       // Check cache first
       const now = Date.now();
       if (this._brandsCache && this._brandsCacheTime && (now - this._brandsCacheTime) < this._brandsCacheTTL) {
@@ -1734,6 +1758,7 @@ export class ScraperService {
    */
   async scrapeBrands(brands, options = {}) {
     try {
+      await this.ensureProxyPoolReady();
       let brandsToScrape = [];
 
       if (!brands || brands.length === 0) {
@@ -1841,6 +1866,7 @@ export class ScraperService {
    */
   async countDevicesByBrand(brandName, options = {}) {
     try {
+      await this.ensureProxyPoolReady();
       const brandNameLower = brandName ? brandName.toLowerCase() : null;
       
       // Get brand from database to get URL
@@ -1983,6 +2009,7 @@ export class ScraperService {
    */
   async searchDevices(filters = {}) {
     try {
+      await this.ensureProxyPoolReady();
       const { keyword, brand_name, minYear, excludeKeywords } = filters;
       
       // Determine search term - prefer brand_name over keyword
@@ -2054,6 +2081,7 @@ export class ScraperService {
    */
   async getDeviceSpecificationsById(deviceId) {
     try {
+      await this.ensureProxyPoolReady();
       const deviceIdNum = parseInt(deviceId, 10);
       if (isNaN(deviceIdNum)) {
         throw new Error(`Invalid device ID: ${deviceId}`);

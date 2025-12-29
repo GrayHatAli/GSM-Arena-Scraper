@@ -42,6 +42,8 @@ export class RequestQueue {
       lastAdjustment: Date.now(),
       adjustmentInterval: 30000 // 30 ثانیه
     };
+
+    this.lastProxyFallbackLogAt = 0;
     
     logProgress(`RequestQueue initialized - maxConcurrent: ${this.maxConcurrent}, proxy support: ${this.proxyManager.isEnabled()}`, 'info');
   }
@@ -121,18 +123,28 @@ export class RequestQueue {
         return;
       }
 
-      // Get proxy if enabled
-      if (this.proxyManager.isEnabled()) {
+      // Get proxy if enabled and healthy (unless direct is forced)
+      if (!options.forceDirect && this.proxyManager.canUseProxy()) {
         currentProxy = this.proxyManager.getNextProxy();
         if (!currentProxy) {
-          const error = new Error('No healthy proxies available');
-          error.code = 'NO_PROXY';
-          reject(error);
-          return;
+          if (!this.proxyManager.options.fallbackToDirect) {
+            const error = new Error('No healthy proxies available');
+            error.code = 'NO_PROXY';
+            reject(error);
+            return;
+          }
         }
         
         // Add proxy to request options
-        options.proxy = this.proxyManager.toAxiosProxy(currentProxy);
+        if (currentProxy) {
+          options.proxy = this.proxyManager.toAxiosProxy(currentProxy);
+        }
+      } else if (this.proxyManager.isEnabled() && this.proxyManager.options.fallbackToDirect) {
+        const now = Date.now();
+        if (now - this.lastProxyFallbackLogAt > 60000) {
+          logProgress('Proxy pool unhealthy or disabled. Falling back to direct requests.', 'warning');
+          this.lastProxyFallbackLogAt = now;
+        }
       }
 
       // Execute the request
@@ -363,4 +375,3 @@ export class RequestQueue {
     logProgress('RequestQueue reset completed', 'info');
   }
 }
-
